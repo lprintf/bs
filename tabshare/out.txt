@@ -1,0 +1,3 @@
+[2595256:2595283:0402/200806.741029:ERROR:base/files/file_path_watcher_inotify.cc:338] inotify_init() failed: Too many open files (24)
+[2595309:2595309:0402/200806.828185:ERROR:base/memory/shared_memory_switch.cc:289] Failed global descriptor lookup: 7
+[2595309:2595320:0402/200806.830655:ERROR:base/files/file_path_watcher_inotify.cc:338] inotify_init() failed: Too many open files (24)

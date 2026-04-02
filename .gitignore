@@ -1,0 +1,36 @@
+# Gemini Browser Manager - gitignore
+
+# 浏览器数据目录（包含登录凭据，敏感信息）
+browser_data/
+certs/
+# 包含浏览器数据、日志以及输出等内容。
+data
+# 参考项目
+g2api
+
+# 测试截图
+test/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# 环境变量
+.env
+*.env
+
+# 临时文件
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.claude/

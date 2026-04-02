@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TabShare Viewer</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #222;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            display: block;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+            /* This will keep aspect ratio */
+            max-width: 100vw;
+            max-height: 100vh;
+            /* In a real implementation we might want this to resize dynamically */
+        }
+        #status {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: #0f0;
+            font-family: monospace;
+            background: rgba(0,0,0,0.7);
+            padding: 5px;
+            border-radius: 4px;
+            pointer-events: none;
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body>
+    <div id="status">Connecting...</div>
+    <canvas id="screen" width="1280" height="720"></canvas>
+
+    <script>
+        const statusEl = document.getElementById('status');
+        const canvas = document.getElementById('screen');
+        const ctx = canvas.getContext('2d', { alpha: false }); // Optimize for no transparency
+
+        // Parse tabId from URL e.g. /viewer/tab_1
+        const parts = window.location.pathname.split('/');
+        const tabId = parts[parts.length - 1];
+
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}/ws/tab/${tabId}`;
+        const ws = new WebSocket(wsUrl);
+
+        let isRendering = false;
+        let nextImageBitmap = null;
+
+        // Render loop using double buffering (requestAnimationFrame)
+        function renderLoop() {
+            if (nextImageBitmap) {
+                ctx.drawImage(nextImageBitmap, 0, 0);
+                nextImageBitmap.close(); // Clean up memory
+                nextImageBitmap = null;
+            }
+            isRendering = requestAnimationFrame(renderLoop);
+        }
+        
+        ws.onopen = () => {
+            statusEl.innerText = "Connected";
+            statusEl.style.color = "#0f0";
+            if (!isRendering) renderLoop();
+        };
+
+        ws.onclose = () => {
+            statusEl.innerText = "Disconnected";
+            statusEl.style.color = "#f00";
+            cancelAnimationFrame(isRendering);
+            isRendering = false;
+        };
+
+        ws.onmessage = async (event) => {
+            const msg = JSON.parse(event.data);
+            if (msg.type === 'frame') {
+                // Background decoding using createImageBitmap to avoid flicker
+                const blob = await fetch(`data:image/jpeg;base64,${msg.data}`).then(r => r.blob());
+                createImageBitmap(blob).then(bitmap => {
+                    // Update canvas internal size to match metadata if needed
+                    if (msg.metadata) {
+                        const { deviceWidth, deviceHeight } = msg.metadata;
+                        if (deviceWidth && deviceHeight && (canvas.width !== deviceWidth || canvas.height !== deviceHeight)) {
+                            canvas.width = deviceWidth;
+                            canvas.height = deviceHeight;
+                        }
+                    }
+                    if (nextImageBitmap) nextImageBitmap.close();
+                    nextImageBitmap = bitmap;
+                });
+            }
+        };
+
+        // Visibility Change optimization
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                statusEl.innerText = "Suspended";
+                statusEl.style.color = "#cc0";
+                ws.send(JSON.stringify({ type: 'suspend' }));
+            } else {
+                statusEl.innerText = "Connected";
+                statusEl.style.color = "#0f0";
+                ws.send(JSON.stringify({ type: 'resume' }));
+            }
+        });
+
+        // Input Handling functions
+        function getScale() {
+            const rect = canvas.getBoundingClientRect();
+            return {
+                scaleX: canvas.width / rect.width,
+                scaleY: canvas.height / rect.height,
+                offsetX: rect.left,
+                offsetY: rect.top
+            };
+        }
+
+        function sendMouseEvent(e, eventType) {
+            e.preventDefault(); // Prevent default browser actions
+            const { scaleX, scaleY, offsetX, offsetY } = getScale();
+            const x = (e.clientX - offsetX) * scaleX;
+            const y = (e.clientY - offsetY) * scaleY;
+            
+            let btn = "none";
+            if (e.button === 0) btn = "left";
+            else if (e.button === 1) btn = "middle";
+            else if (e.button === 2) btn = "right";
+
+            ws.send(JSON.stringify({
+                type: 'mouse',
+                eventType: eventType, // 'mouseMoved', 'mousePressed', 'mouseReleased'
+                x: x,
+                y: y,
+                button: btn
+            }));
+        }
+
+        canvas.addEventListener('mousemove', (e) => sendMouseEvent(e, 'mouseMoved'));
+        canvas.addEventListener('mousedown', (e) => sendMouseEvent(e, 'mousePressed'));
+        canvas.addEventListener('mouseup', (e) => sendMouseEvent(e, 'mouseReleased'));
+        
+        // Prevent context menu on right click
+        canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+        canvas.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const { scaleX, scaleY, offsetX, offsetY } = getScale();
+            const x = (e.clientX - offsetX) * scaleX;
+            const y = (e.clientY - offsetY) * scaleY;
+            
+            ws.send(JSON.stringify({
+                type: 'scroll',
+                x: x,
+                y: y,
+                deltaX: e.deltaX,
+                deltaY: e.deltaY
+            }));
+        }, { passive: false });
+
+        window.addEventListener('keydown', (e) => {
+            ws.send(JSON.stringify({
+                type: 'keyboard',
+                eventType: 'keyDown',
+                key: e.key,
+                code: e.code,
+                keyCode: e.keyCode
+            }));
+        });
+
+        window.addEventListener('keyup', (e) => {
+            ws.send(JSON.stringify({
+                type: 'keyboard',
+                eventType: 'keyUp',
+                key: e.key,
+                code: e.code,
+                keyCode: e.keyCode
+            }));
+        });
+    </script>
+</body>
+</html>

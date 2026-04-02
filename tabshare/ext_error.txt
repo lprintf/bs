@@ -1,0 +1,4 @@
+[2489987:2490013:0402/184852.993517:ERROR:base/files/file_path_watcher_inotify.cc:338] inotify_init() failed: Too many open files (24)
+[2490044:2490044:0402/184853.065491:ERROR:base/memory/shared_memory_switch.cc:289] Failed global descriptor lookup: 7
+[2490044:2490049:0402/184853.068082:ERROR:base/files/file_path_watcher_inotify.cc:338] inotify_init() failed: Too many open files (24)
+[2490042:2490042:0402/184853.102206:ERROR:ui/ozone/platform/wayland/gpu/wayland_surface_factory.cc:251] '--ozone-platform=wayland' is not compatible with Vulkan. Consider switching to '--ozone-platform=x11' or disabling Vulkan
