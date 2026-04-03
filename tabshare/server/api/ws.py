@@ -1,6 +1,6 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
 from server.services.tab_manager import tab_manager
-from server.services.cdp_bridge import CDPBridge
+from server.services.webrtc_bridge import WebRTCBridge
 
 router = APIRouter()
 
@@ -14,5 +14,5 @@ async def websocket_endpoint(websocket: WebSocket, tab_id: str):
         await websocket.close()
         return
 
-    bridge = CDPBridge(page, websocket)
+    bridge = WebRTCBridge(page, websocket)
     await bridge.start()

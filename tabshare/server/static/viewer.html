@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TabShare Viewer</title>
+    <title>TabShare WebRTC Viewer</title>
     <style>
         body {
             margin: 0;
@@ -14,13 +14,11 @@
             align-items: center;
             height: 100vh;
         }
-        canvas {
+        video {
             display: block;
             box-shadow: 0 0 20px rgba(0,0,0,0.5);
-            /* This will keep aspect ratio */
             max-width: 100vw;
             max-height: 100vh;
-            /* In a real implementation we might want this to resize dynamically */
         }
         #status {
             position: absolute;
@@ -38,14 +36,12 @@
 </head>
 <body>
     <div id="status">Connecting...</div>
-    <canvas id="screen" width="1280" height="720"></canvas>
+    <video id="screen" autoplay playsinline muted></video>
 
     <script>
         const statusEl = document.getElementById('status');
-        const canvas = document.getElementById('screen');
-        const ctx = canvas.getContext('2d', { alpha: false }); // Optimize for no transparency
+        const video = document.getElementById('screen');
 
-        // Parse tabId from URL e.g. /viewer/tab_1
         const parts = window.location.pathname.split('/');
         const tabId = parts[parts.length - 1];
 
@@ -53,78 +49,99 @@
         const wsUrl = `${protocol}//${window.location.host}/ws/tab/${tabId}`;
         const ws = new WebSocket(wsUrl);
 
-        let isRendering = false;
-        let nextImageBitmap = null;
+        const pc = new RTCPeerConnection();
 
-        // Render loop using double buffering (requestAnimationFrame)
-        function renderLoop() {
-            if (nextImageBitmap) {
-                ctx.drawImage(nextImageBitmap, 0, 0);
-                nextImageBitmap.close(); // Clean up memory
-                nextImageBitmap = null;
+        // Ensure we offer to receive video stream
+        pc.addTransceiver('video', { direction: 'recvonly' });
+
+        pc.ontrack = (event) => {
+            console.log("Track received!", event);
+            if (video.srcObject !== event.streams[0]) {
+                video.srcObject = event.streams[0];
+                console.log("srcObject set, stream tracks:", event.streams[0].getTracks().map(t => t.kind + ":" + t.readyState));
             }
-            isRendering = requestAnimationFrame(renderLoop);
-        }
-        
-        ws.onopen = () => {
-            statusEl.innerText = "Connected";
-            statusEl.style.color = "#0f0";
-            if (!isRendering) renderLoop();
+            video.play().then(() => {
+                console.log("Video playing");
+            }).catch(e => {
+                console.error("Video play failed:", e);
+            });
+        };
+
+        ws.onopen = async () => {
+            statusEl.innerText = "Waiting for capture stream...";
+            statusEl.style.color = "#ff0";
         };
 
         ws.onclose = () => {
             statusEl.innerText = "Disconnected";
             statusEl.style.color = "#f00";
-            cancelAnimationFrame(isRendering);
-            isRendering = false;
+            pc.close();
         };
 
         ws.onmessage = async (event) => {
             const msg = JSON.parse(event.data);
-            if (msg.type === 'frame') {
-                // Background decoding using createImageBitmap to avoid flicker
-                const blob = await fetch(`data:image/jpeg;base64,${msg.data}`).then(r => r.blob());
-                createImageBitmap(blob).then(bitmap => {
-                    // Update canvas internal size to match metadata if needed
-                    if (msg.metadata) {
-                        const { deviceWidth, deviceHeight } = msg.metadata;
-                        if (deviceWidth && deviceHeight && (canvas.width !== deviceWidth || canvas.height !== deviceHeight)) {
-                            canvas.width = deviceWidth;
-                            canvas.height = deviceHeight;
-                        }
+            if (msg.type === 'webrtc') {
+                const signal = msg.signal;
+                try {
+                    if (signal.ready) {
+                        statusEl.innerText = "Signaling...";
+                        // Create offer ONLY when we receive the stream ready ping
+                        const offer = await pc.createOffer();
+                        await pc.setLocalDescription(offer);
+                        ws.send(JSON.stringify({
+                            type: 'webrtc',
+                            signal: { offer: pc.localDescription }
+                        }));
+                    } else if (signal.answer) {
+                        await pc.setRemoteDescription(new RTCSessionDescription(signal.answer));
+                    } else if (signal.ice) {
+                        await pc.addIceCandidate(new RTCIceCandidate(signal.ice));
                     }
-                    if (nextImageBitmap) nextImageBitmap.close();
-                    nextImageBitmap = bitmap;
-                });
+                } catch(e) {
+                    console.error("WebRTC Error:", e);
+                }
             }
         };
 
-        // Visibility Change optimization
-        document.addEventListener('visibilitychange', () => {
-            if (document.hidden) {
-                statusEl.innerText = "Suspended";
-                statusEl.style.color = "#cc0";
-                ws.send(JSON.stringify({ type: 'suspend' }));
+        pc.onicecandidate = (event) => {
+            if (event.candidate) {
+                console.log("Viewer ICE candidate:", event.candidate.candidate);
+                ws.send(JSON.stringify({
+                    type: 'webrtc',
+                    signal: { ice: event.candidate }
+                }));
             } else {
-                statusEl.innerText = "Connected";
-                statusEl.style.color = "#0f0";
-                ws.send(JSON.stringify({ type: 'resume' }));
+                console.log("Viewer ICE gathering complete");
             }
-        });
+        };
 
-        // Input Handling functions
+        pc.oniceconnectionstatechange = () => {
+            console.log("ICE Connection State:", pc.iceConnectionState);
+            if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+                statusEl.innerText = "Connected (WebRTC)";
+                statusEl.style.color = "#0f0";
+            } else if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
+                statusEl.innerText = "WebRTC Disconnected";
+                statusEl.style.color = "#f00";
+            }
+        };
+
+        // Inputs Mapping
         function getScale() {
-            const rect = canvas.getBoundingClientRect();
+            const rect = video.getBoundingClientRect();
+            // Video raw resolution
+            const vw = video.videoWidth || rect.width;
+            const vh = video.videoHeight || rect.height;
             return {
-                scaleX: canvas.width / rect.width,
-                scaleY: canvas.height / rect.height,
+                scaleX: vw / rect.width,
+                scaleY: vh / rect.height,
                 offsetX: rect.left,
                 offsetY: rect.top
             };
         }
 
         function sendMouseEvent(e, eventType) {
-            e.preventDefault(); // Prevent default browser actions
+            e.preventDefault();
             const { scaleX, scaleY, offsetX, offsetY } = getScale();
             const x = (e.clientX - offsetX) * scaleX;
             const y = (e.clientY - offsetY) * scaleY;
@@ -136,21 +153,24 @@
 
             ws.send(JSON.stringify({
                 type: 'mouse',
-                eventType: eventType, // 'mouseMoved', 'mousePressed', 'mouseReleased'
+                eventType: eventType,
                 x: x,
                 y: y,
                 button: btn
             }));
         }
 
-        canvas.addEventListener('mousemove', (e) => sendMouseEvent(e, 'mouseMoved'));
-        canvas.addEventListener('mousedown', (e) => sendMouseEvent(e, 'mousePressed'));
-        canvas.addEventListener('mouseup', (e) => sendMouseEvent(e, 'mouseReleased'));
+        video.addEventListener('mousemove', (e) => sendMouseEvent(e, 'mouseMoved'));
+        video.addEventListener('mousedown', (e) => sendMouseEvent(e, 'mousePressed'));
+        video.addEventListener('mouseup', (e) => {
+            // Give some time before focusing to ensure video keeps playing though playsinline usually works flawlessly
+            video.focus();
+            sendMouseEvent(e, 'mouseReleased');
+        });
         
-        // Prevent context menu on right click
-        canvas.addEventListener('contextmenu', e => e.preventDefault());
+        video.addEventListener('contextmenu', e => e.preventDefault());
 
-        canvas.addEventListener('wheel', (e) => {
+        video.addEventListener('wheel', (e) => {
             e.preventDefault();
             const { scaleX, scaleY, offsetX, offsetY } = getScale();
             const x = (e.clientX - offsetX) * scaleX;

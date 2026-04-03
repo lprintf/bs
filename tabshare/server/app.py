@@ -49,4 +49,4 @@ async def viewer(tab_id: str):
 if __name__ == "__main__":
     import uvicorn
     from server.config import HOST, PORT
-    uvicorn.run("server.app:app", host=HOST, port=PORT, reload=True)
+    uvicorn.run("server.app:app", host=HOST, port=PORT)
