@@ -3,207 +3,212 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TabShare WebRTC Viewer</title>
+    <title>TabShare Viewer</title>
     <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            margin: 0;
-            overflow: hidden;
-            background-color: #222;
+            background: #0a0a0f;
             display: flex;
             justify-content: center;
             align-items: center;
             height: 100vh;
+            overflow: hidden;
+            font-family: -apple-system, 'Segoe UI', Roboto, sans-serif;
         }
-        video {
+        #screen {
             display: block;
-            box-shadow: 0 0 20px rgba(0,0,0,0.5);
             max-width: 100vw;
             max-height: 100vh;
+            cursor: default;
+            outline: none;
         }
         #status {
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            color: #0f0;
-            font-family: monospace;
-            background: rgba(0,0,0,0.7);
-            padding: 5px;
-            border-radius: 4px;
-            pointer-events: none;
+            position: fixed;
+            top: 12px;
+            left: 12px;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 13px;
+            padding: 6px 12px;
+            border-radius: 6px;
             z-index: 1000;
+            pointer-events: none;
+            transition: opacity 0.5s ease;
         }
+        .status-connecting { background: rgba(255,170,0,0.15); color: #ffa500; border: 1px solid rgba(255,170,0,0.3); }
+        .status-connected  { background: rgba(0,200,80,0.15); color: #0c6; border: 1px solid rgba(0,200,80,0.3); }
+        .status-error      { background: rgba(255,60,60,0.15); color: #f44; border: 1px solid rgba(255,60,60,0.3); }
     </style>
 </head>
 <body>
-    <div id="status">Connecting...</div>
-    <video id="screen" autoplay playsinline muted></video>
+    <div id="status" class="status-connecting">Connecting…</div>
+    <video id="screen" autoplay playsinline muted tabindex="0"></video>
 
     <script>
+    (() => {
         const statusEl = document.getElementById('status');
         const video = document.getElementById('screen');
+        const tabId = window.location.pathname.split('/').pop();
 
-        const parts = window.location.pathname.split('/');
-        const tabId = parts[parts.length - 1];
+        let ws, pc;
+        let statusFadeTimer = null;
 
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${protocol}//${window.location.host}/ws/tab/${tabId}`;
-        const ws = new WebSocket(wsUrl);
-
-        const pc = new RTCPeerConnection();
-
-        // Ensure we offer to receive video stream
-        pc.addTransceiver('video', { direction: 'recvonly' });
-
-        pc.ontrack = (event) => {
-            console.log("Track received!", event);
-            if (video.srcObject !== event.streams[0]) {
-                video.srcObject = event.streams[0];
-                console.log("srcObject set, stream tracks:", event.streams[0].getTracks().map(t => t.kind + ":" + t.readyState));
+        function setStatus(text, type) {
+            statusEl.textContent = text;
+            statusEl.className = `status-${type}`;
+            statusEl.style.opacity = '1';
+            clearTimeout(statusFadeTimer);
+            if (type === 'connected') {
+                statusFadeTimer = setTimeout(() => { statusEl.style.opacity = '0'; }, 3000);
             }
-            video.play().then(() => {
-                console.log("Video playing");
-            }).catch(e => {
-                console.error("Video play failed:", e);
-            });
-        };
+        }
 
-        ws.onopen = async () => {
-            statusEl.innerText = "Waiting for capture stream...";
-            statusEl.style.color = "#ff0";
-        };
+        function connect() {
+            const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${location.host}/ws/tab/${tabId}`);
 
-        ws.onclose = () => {
-            statusEl.innerText = "Disconnected";
-            statusEl.style.color = "#f00";
-            pc.close();
-        };
+            pc = new RTCPeerConnection();
+            pc.addTransceiver('video', { direction: 'recvonly' });
 
-        ws.onmessage = async (event) => {
-            const msg = JSON.parse(event.data);
-            if (msg.type === 'webrtc') {
+            pc.ontrack = (event) => {
+                if (video.srcObject !== event.streams[0]) {
+                    video.srcObject = event.streams[0];
+                }
+                video.play().catch(() => {});
+                video.focus();
+            };
+
+            pc.onicecandidate = (event) => {
+                if (event.candidate && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: 'webrtc', signal: { ice: event.candidate } }));
+                }
+            };
+
+            pc.oniceconnectionstatechange = () => {
+                const state = pc.iceConnectionState;
+                if (state === 'connected' || state === 'completed') {
+                    setStatus('Connected', 'connected');
+                } else if (state === 'disconnected' || state === 'failed') {
+                    setStatus('Reconnecting…', 'error');
+                    reconnect();
+                }
+            };
+
+            ws.onopen = () => {
+                setStatus('Waiting for stream…', 'connecting');
+            };
+
+            ws.onclose = () => {
+                setStatus('Disconnected', 'error');
+                pc.close();
+                setTimeout(reconnect, 2000);
+            };
+
+            ws.onmessage = async (event) => {
+                const msg = JSON.parse(event.data);
+                if (msg.type !== 'webrtc') return;
                 const signal = msg.signal;
                 try {
                     if (signal.ready) {
-                        statusEl.innerText = "Signaling...";
-                        // Create offer ONLY when we receive the stream ready ping
+                        setStatus('Signaling…', 'connecting');
                         const offer = await pc.createOffer();
                         await pc.setLocalDescription(offer);
-                        ws.send(JSON.stringify({
-                            type: 'webrtc',
-                            signal: { offer: pc.localDescription }
-                        }));
+                        ws.send(JSON.stringify({ type: 'webrtc', signal: { offer: pc.localDescription } }));
                     } else if (signal.answer) {
                         await pc.setRemoteDescription(new RTCSessionDescription(signal.answer));
                     } else if (signal.ice) {
                         await pc.addIceCandidate(new RTCIceCandidate(signal.ice));
                     }
                 } catch(e) {
-                    console.error("WebRTC Error:", e);
+                    console.error("Signaling error:", e);
                 }
-            }
-        };
-
-        pc.onicecandidate = (event) => {
-            if (event.candidate) {
-                console.log("Viewer ICE candidate:", event.candidate.candidate);
-                ws.send(JSON.stringify({
-                    type: 'webrtc',
-                    signal: { ice: event.candidate }
-                }));
-            } else {
-                console.log("Viewer ICE gathering complete");
-            }
-        };
-
-        pc.oniceconnectionstatechange = () => {
-            console.log("ICE Connection State:", pc.iceConnectionState);
-            if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
-                statusEl.innerText = "Connected (WebRTC)";
-                statusEl.style.color = "#0f0";
-            } else if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
-                statusEl.innerText = "WebRTC Disconnected";
-                statusEl.style.color = "#f00";
-            }
-        };
-
-        // Inputs Mapping
-        function getScale() {
-            const rect = video.getBoundingClientRect();
-            // Video raw resolution
-            const vw = video.videoWidth || rect.width;
-            const vh = video.videoHeight || rect.height;
-            return {
-                scaleX: vw / rect.width,
-                scaleY: vh / rect.height,
-                offsetX: rect.left,
-                offsetY: rect.top
             };
         }
 
-        function sendMouseEvent(e, eventType) {
-            e.preventDefault();
-            const { scaleX, scaleY, offsetX, offsetY } = getScale();
-            const x = (e.clientX - offsetX) * scaleX;
-            const y = (e.clientY - offsetY) * scaleY;
-            
-            let btn = "none";
-            if (e.button === 0) btn = "left";
-            else if (e.button === 1) btn = "middle";
-            else if (e.button === 2) btn = "right";
-
-            ws.send(JSON.stringify({
-                type: 'mouse',
-                eventType: eventType,
-                x: x,
-                y: y,
-                button: btn
-            }));
+        function reconnect() {
+            try { ws?.close(); } catch(e) {}
+            try { pc?.close(); } catch(e) {}
+            video.srcObject = null;
+            setStatus('Reconnecting…', 'connecting');
+            setTimeout(connect, 500);
         }
 
-        video.addEventListener('mousemove', (e) => sendMouseEvent(e, 'mouseMoved'));
-        video.addEventListener('mousedown', (e) => sendMouseEvent(e, 'mousePressed'));
-        video.addEventListener('mouseup', (e) => {
-            // Give some time before focusing to ensure video keeps playing though playsinline usually works flawlessly
-            video.focus();
-            sendMouseEvent(e, 'mouseReleased');
+        // ─── Input Mapping ───
+
+        function getScale() {
+            const rect = video.getBoundingClientRect();
+            const vw = video.videoWidth || rect.width;
+            const vh = video.videoHeight || rect.height;
+            return {
+                sx: vw / rect.width,
+                sy: vh / rect.height,
+                ox: rect.left,
+                oy: rect.top
+            };
+        }
+
+        function mapCoords(e) {
+            const { sx, sy, ox, oy } = getScale();
+            return { x: (e.clientX - ox) * sx, y: (e.clientY - oy) * sy };
+        }
+
+        function buttonName(b) {
+            return b === 0 ? 'left' : b === 1 ? 'middle' : b === 2 ? 'right' : 'none';
+        }
+
+        function sendInput(data) {
+            if (ws?.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify(data));
+            }
+        }
+
+        // Mouse
+        video.addEventListener('mousemove', (e) => {
+            e.preventDefault();
+            const { x, y } = mapCoords(e);
+            sendInput({ type: 'mouse', eventType: 'mouseMoved', x, y, button: 'none' });
         });
-        
+
+        video.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            video.focus();
+            const { x, y } = mapCoords(e);
+            sendInput({ type: 'mouse', eventType: 'mousePressed', x, y, button: buttonName(e.button) });
+        });
+
+        video.addEventListener('mouseup', (e) => {
+            e.preventDefault();
+            const { x, y } = mapCoords(e);
+            sendInput({ type: 'mouse', eventType: 'mouseReleased', x, y, button: buttonName(e.button) });
+        });
+
         video.addEventListener('contextmenu', e => e.preventDefault());
 
+        // Scroll
         video.addEventListener('wheel', (e) => {
             e.preventDefault();
-            const { scaleX, scaleY, offsetX, offsetY } = getScale();
-            const x = (e.clientX - offsetX) * scaleX;
-            const y = (e.clientY - offsetY) * scaleY;
-            
-            ws.send(JSON.stringify({
-                type: 'scroll',
-                x: x,
-                y: y,
-                deltaX: e.deltaX,
-                deltaY: e.deltaY
-            }));
+            const { x, y } = mapCoords(e);
+            sendInput({ type: 'scroll', x, y, deltaX: e.deltaX, deltaY: e.deltaY });
         }, { passive: false });
 
-        window.addEventListener('keydown', (e) => {
-            ws.send(JSON.stringify({
-                type: 'keyboard',
-                eventType: 'keyDown',
-                key: e.key,
-                code: e.code,
-                keyCode: e.keyCode
-            }));
+        // Keyboard — capture on video element to avoid interference
+        video.addEventListener('keydown', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            sendInput({ type: 'keyboard', eventType: 'keyDown', key: e.key, code: e.code });
         });
 
-        window.addEventListener('keyup', (e) => {
-            ws.send(JSON.stringify({
-                type: 'keyboard',
-                eventType: 'keyUp',
-                key: e.key,
-                code: e.code,
-                keyCode: e.keyCode
-            }));
+        video.addEventListener('keyup', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            sendInput({ type: 'keyboard', eventType: 'keyUp', key: e.key, code: e.code });
         });
+
+        // Auto-focus video on click anywhere
+        document.body.addEventListener('click', () => video.focus());
+
+        // Start
+        connect();
+    })();
     </script>
 </body>
 </html>

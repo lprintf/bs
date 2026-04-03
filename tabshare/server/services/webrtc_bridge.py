@@ -8,14 +8,17 @@ class WebRTCBridge:
     def __init__(self, page: Page, websocket: WebSocket):
         self.page = page
         self.websocket = websocket
+        self._cdp = None
 
     async def start(self):
-        print("WebRTCBridge: injecting getDisplayMedia capture + WebRTC into page...")
+        print("WebRTCBridge: starting...")
+
+        # Get CDP session for input dispatch
+        self._cdp = await self.page.context.new_cdp_session(self.page)
 
         # Step 1: Ensure stream is captured (only once per page)
         await self.page.evaluate("""() => {
             if (window._webrtc && window._webrtc.ready && window._webrtc.stream) {
-                // Stream already exists and is ready, reuse it
                 console.log("Reusing existing stream:", window._webrtc.stream.id);
                 return;
             }
@@ -39,7 +42,6 @@ class WebRTCBridge:
         }""")
 
         # Step 2: Wait for stream to be ready
-        print("WebRTCBridge: waiting for getDisplayMedia to resolve...")
         ready = await self.page.evaluate("""() => {
             return new Promise((resolve) => {
                 if (window._webrtc.ready) { resolve("ready"); return; }
@@ -55,57 +57,41 @@ class WebRTCBridge:
             await self.websocket.send_json({"type": "error", "message": f"Capture failed: {ready}"})
             return
 
-        # Diagnostic
         track_info = await self.page.evaluate("""() => {
             const t = window._webrtc.stream.getVideoTracks()[0];
             const s = t.getSettings();
-            return JSON.stringify({label:t.label, readyState:t.readyState, enabled:t.enabled,
-                muted:t.muted, width:s.width, height:s.height, frameRate:s.frameRate, displaySurface:s.displaySurface});
+            return JSON.stringify({readyState:t.readyState, width:s.width, height:s.height, frameRate:s.frameRate});
         }""")
-        print(f"WebRTCBridge: captured track info: {track_info}")
+        print(f"WebRTCBridge: stream {track_info}")
 
-        print("WebRTCBridge: stream ready, waiting for viewer offer...")
-
-        # Notify viewer that stream is ready
+        # Notify viewer
         await self.websocket.send_json({"type": "webrtc", "signal": {"ready": True}})
 
-        # Step 3: Listen for WS messages
+        # Listen for WS messages
         await self._listen_to_ws()
 
     async def _handle_offer(self, offer_sdp):
-        """Forward offer to page, get answer + ICE candidates back directly via evaluate."""
-        print("WebRTCBridge: received offer, creating answer in page...")
-
-        # This evaluate creates the PC, handles the offer, waits for ICE gathering,
-        # and returns everything in one shot. No expose_function needed.
+        """Create PeerConnection on page side, return answer + ICE candidates."""
         result = await self.page.evaluate("""async (offerSdp) => {
             const pc = new RTCPeerConnection();
             window._webrtc.pc = pc;
 
-            // Add captured stream tracks
             window._webrtc.stream.getTracks().forEach(track => {
                 pc.addTrack(track, window._webrtc.stream);
             });
 
-            // Gather ICE candidates
             const candidates = [];
             const gatheringComplete = new Promise((resolve) => {
                 pc.onicecandidate = (event) => {
-                    if (event.candidate) {
-                        candidates.push(event.candidate.toJSON());
-                    } else {
-                        resolve(); // null candidate = gathering done
-                    }
+                    if (event.candidate) candidates.push(event.candidate.toJSON());
+                    else resolve();
                 };
-                // Safety timeout
                 setTimeout(resolve, 3000);
             });
 
             await pc.setRemoteDescription(new RTCSessionDescription(offerSdp));
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
-
-            // Wait for ICE gathering
             await gatheringComplete;
 
             console.log("WebRTC answer created, ICE candidates:", candidates.length);
@@ -116,19 +102,16 @@ class WebRTCBridge:
             };
         }""", offer_sdp)
 
-        # Send answer to viewer
         await self.websocket.send_json({
             "type": "webrtc",
             "signal": {"answer": result["answer"]}
         })
-        print(f"WebRTCBridge: sent answer + {len(result['iceCandidates'])} ICE candidates to viewer")
-
-        # Send ICE candidates to viewer
         for ice in result["iceCandidates"]:
             await self.websocket.send_json({
                 "type": "webrtc",
                 "signal": {"ice": ice}
             })
+        print(f"WebRTCBridge: sent answer + {len(result['iceCandidates'])} ICE candidates")
 
     async def _handle_ice(self, ice_candidate):
         """Add viewer's ICE candidate to page's PeerConnection."""
@@ -138,20 +121,77 @@ class WebRTCBridge:
             }
         }""", ice_candidate)
 
+    # ─── Input Dispatch (via CDP) ───
+
+    async def _handle_mouse(self, msg):
+        event_type = msg.get("eventType", "mouseMoved")
+        x, y = msg.get("x", 0), msg.get("y", 0)
+        button = msg.get("button", "none")
+        click_count = 1 if event_type == "mousePressed" else 0
+        try:
+            await self._cdp.send("Input.dispatchMouseEvent", {
+                "type": event_type,
+                "x": x, "y": y,
+                "button": button,
+                "clickCount": click_count,
+            })
+        except Exception:
+            pass
+
+    async def _handle_scroll(self, msg):
+        x, y = msg.get("x", 0), msg.get("y", 0)
+        dx, dy = msg.get("deltaX", 0), msg.get("deltaY", 0)
+        try:
+            await self._cdp.send("Input.dispatchMouseEvent", {
+                "type": "mouseWheel",
+                "x": x, "y": y,
+                "deltaX": dx, "deltaY": dy,
+            })
+        except Exception:
+            pass
+
+    async def _handle_keyboard(self, msg):
+        event_type = msg.get("eventType", "keyDown")
+        key = msg.get("key", "")
+        code = msg.get("code", "")
+        try:
+            cdp_type = "keyDown" if event_type == "keyDown" else "keyUp"
+            params = {"type": cdp_type, "key": key, "code": code}
+            if len(key) == 1:
+                params["text"] = key
+            await self._cdp.send("Input.dispatchKeyEvent", params)
+        except Exception:
+            pass
+
+    # ─── WebSocket Message Loop ───
+
     async def _listen_to_ws(self):
-        """Listen for viewer's WebRTC signals."""
         try:
             while True:
                 raw = await self.websocket.receive_text()
                 msg = json.loads(raw)
+                msg_type = msg.get("type")
 
-                if msg.get("type") == "webrtc":
+                if msg_type == "webrtc":
                     signal = msg.get("signal", {})
                     if "offer" in signal:
                         await self._handle_offer(signal["offer"])
                     elif "ice" in signal:
                         await self._handle_ice(signal["ice"])
+                elif msg_type == "mouse":
+                    await self._handle_mouse(msg)
+                elif msg_type == "scroll":
+                    await self._handle_scroll(msg)
+                elif msg_type == "keyboard":
+                    await self._handle_keyboard(msg)
+
         except WebSocketDisconnect:
             print("WebRTCBridge: viewer disconnected")
         except Exception as e:
-            print(f"WebRTCBridge: WS error: {e}")
+            print(f"WebRTCBridge: error: {e}")
+        finally:
+            # Detach CDP session
+            try:
+                await self._cdp.detach()
+            except Exception:
+                pass
