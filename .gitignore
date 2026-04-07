@@ -8,6 +8,8 @@ data
 # 参考项目
 g2api
 
+# 临时文件
+tmp/
 # 测试截图
 test/
 

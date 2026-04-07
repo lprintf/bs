@@ -50,7 +50,11 @@ class TabManager:
         self.tab_counter += 1
         tab_id = f"tab_{self.tab_counter}"
         self.tabs[tab_id] = page
-        page.on("console", lambda msg: print(f"PAGE LOG: {msg.text}"))
+        _SUPPRESSED = ["Failed to execute 'postMessage' on 'DOMWindow'"]
+        page.on("console", lambda msg: (
+            None if any(s in msg.text for s in _SUPPRESSED)
+            else print(f"PAGE LOG [{msg.type}]: {msg.text}")
+        ))
         print(f"Created new tab: {tab_id}")
         return tab_id, page
 
