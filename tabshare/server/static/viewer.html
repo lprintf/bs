@@ -83,13 +83,17 @@
         <div class="spinner"></div>
         <div class="nav-text">Loading…</div>
     </div>
-    <video id="screen" autoplay playsinline muted tabindex="0"></video>
+    <video id="screen" autoplay playsinline muted tabindex="-1"></video>
+
+    <!-- Hidden input element for IME support -->
+    <textarea id="ime-trap" style="position: absolute; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; z-index: -1;" autofocus></textarea>
 
     <script>
     (() => {
         const statusEl = document.getElementById('status');
         const video = document.getElementById('screen');
         const navOverlay = document.getElementById('nav-overlay');
+        const imeTrap = document.getElementById('ime-trap');
         const tabId = window.location.pathname.split('/').pop();
 
         let ws, pc;
@@ -128,7 +132,7 @@
                     video.srcObject = event.streams[0];
                 }
                 video.play().catch(() => {});
-                video.focus();
+                imeTrap.focus(); // Instead of video.focus(), we focus the IME trap
             };
 
             pc.onicecandidate = (event) => {
@@ -180,12 +184,10 @@
                 const signal = msg.signal;
                 try {
                     if (signal.navigating) {
-                        // Page is navigating — show loading overlay
                         console.log('Page navigating…');
                         showNavOverlay();
                         setStatus('Page loading…', 'connecting');
                     } else if (signal.ready) {
-                        // Stream ready — (re)negotiate
                         console.log('Stream ready — negotiating');
                         negotiate();
                     } else if (signal.answer) {
@@ -227,6 +229,8 @@
             }
         }
 
+        // ─── Mouse Events (on Video) ───
+
         video.addEventListener('mousemove', (e) => {
             e.preventDefault();
             const { x, y } = mapCoords(e);
@@ -235,7 +239,7 @@
 
         video.addEventListener('mousedown', (e) => {
             e.preventDefault();
-            video.focus();
+            imeTrap.focus({ preventScroll: true }); // Keep IME trap focused
             const { x, y } = mapCoords(e);
             sendInput({ type: 'mouse', eventType: 'mousePressed', x, y, button: buttonName(e.button) });
         });
@@ -254,19 +258,66 @@
             sendInput({ type: 'scroll', x, y, deltaX: e.deltaX, deltaY: e.deltaY });
         }, { passive: false });
 
-        video.addEventListener('keydown', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            sendInput({ type: 'keyboard', eventType: 'keyDown', key: e.key, code: e.code });
+        // ─── Keyboard & IME Events (on Hidden Textarea) ───
+        
+        let isComposing = false;
+
+        imeTrap.addEventListener('compositionstart', () => {
+            console.log("IME: compositionstart");
+            isComposing = true;
         });
 
-        video.addEventListener('keyup', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
+        imeTrap.addEventListener('compositionend', (e) => {
+            console.log("IME: compositionend", e.data);
+            isComposing = false;
+            if (e.data) {
+                sendInput({ type: 'insertText', text: e.data });
+            }
+            // 延迟清空，防止立刻触发的 input 事件读取到残留或干扰浏览器状态
+            setTimeout(() => { imeTrap.value = ''; }, 0);
+        });
+
+        imeTrap.addEventListener('input', (e) => {
+            console.log("IME: input event", { isComposing, val: imeTrap.value, inputType: e.inputType });
+            // 如果正在拼写拼音，绝对不能清空 value，否则打断输入法！
+            if (isComposing) return;
+            
+            // 处理非输入法状态下的纯粘贴
+            if (e.inputType === 'insertFromPaste') {
+                sendInput({ type: 'insertText', text: imeTrap.value });
+            }
+            
+            // 正常按键已经在 keydown 里发过了，这里直接清空垃圾即可
+            setTimeout(() => { imeTrap.value = ''; }, 0);
+        });
+
+        imeTrap.addEventListener('keydown', (e) => {
+            console.log("IME: keydown", { key: e.key, code: e.code, isComposing });
+            // Do not send bare keydowns while composing or if it's the IME modifier key 229
+            if (isComposing || e.keyCode === 229 || e.key === 'Process' || e.key === 'Unidentified') {
+                return;
+            }
+            
+            // Standard control and character keys go here
+            sendInput({ type: 'keyboard', eventType: 'keyDown', key: e.key, code: e.code });
+            
+            // Prevent browser back navigation for backspace
+            if (e.key === 'Backspace' || e.key === 'Tab') {
+                e.preventDefault();
+            }
+        });
+
+        imeTrap.addEventListener('keyup', (e) => {
+            if (isComposing || e.keyCode === 229 || e.key === 'Process' || e.key === 'Unidentified') {
+                return;
+            }
             sendInput({ type: 'keyboard', eventType: 'keyUp', key: e.key, code: e.code });
         });
 
-        document.body.addEventListener('click', () => video.focus());
+        // Ensure the trap stays focused
+        document.body.addEventListener('click', () => {
+            imeTrap.focus({ preventScroll: true });
+        });
 
         connect();
     })();

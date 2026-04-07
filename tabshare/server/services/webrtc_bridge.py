@@ -11,7 +11,6 @@ class WebRTCBridge:
         self.page = page
         self.websocket = websocket
         self.session_id = uuid.uuid4().hex[:8]  # unique per viewer
-        self._cdp = None
         self._closed = False
         self._nav_task: asyncio.Task | None = None
 
@@ -28,7 +27,6 @@ class WebRTCBridge:
     async def start(self):
         print(f"WebRTCBridge[{self.session_id}]: starting...")
 
-        self._cdp = await self.page.context.new_cdp_session(self.page)
         self.page.on("framenavigated", self._on_navigated)
 
         if not await self._ensure_stream():
@@ -209,41 +207,50 @@ class WebRTCBridge:
         except Exception:
             pass
 
-    # ─── Input Dispatch (via CDP) ───
+    # ─── Input Dispatch (via Playwright API) ───
 
     async def _handle_mouse(self, msg):
         try:
-            await self._cdp.send("Input.dispatchMouseEvent", {
-                "type": msg.get("eventType", "mouseMoved"),
-                "x": msg.get("x", 0), "y": msg.get("y", 0),
-                "button": msg.get("button", "none"),
-                "clickCount": 1 if msg.get("eventType") == "mousePressed" else 0,
-            })
-        except Exception:
-            pass
+            x, y = msg.get("x", 0), msg.get("y", 0)
+            btn = msg.get("button", "none")
+            
+            # map JS buttons to Playwright buttons
+            pw_btn = "left" if btn == "left" else "middle" if btn == "middle" else "right"
+
+            if msg.get("eventType") == "mouseMoved":
+                await self.page.mouse.move(x, y)
+            elif msg.get("eventType") == "mousePressed":
+                await self.page.mouse.down(button=pw_btn if btn != "none" else "left")
+            elif msg.get("eventType") == "mouseReleased":
+                await self.page.mouse.up(button=pw_btn if btn != "none" else "left")
+        except Exception as e:
+            print(f"Mouse error ({msg}): {e}")
 
     async def _handle_scroll(self, msg):
         try:
-            await self._cdp.send("Input.dispatchMouseEvent", {
-                "type": "mouseWheel",
-                "x": msg.get("x", 0), "y": msg.get("y", 0),
-                "deltaX": msg.get("deltaX", 0), "deltaY": msg.get("deltaY", 0),
-            })
+            await self.page.mouse.wheel(msg.get("deltaX", 0), msg.get("deltaY", 0))
         except Exception:
             pass
 
     async def _handle_keyboard(self, msg):
         try:
             key = msg.get("key", "")
-            params = {
-                "type": "keyDown" if msg.get("eventType") == "keyDown" else "keyUp",
-                "key": key, "code": msg.get("code", ""),
-            }
-            if len(key) == 1:
-                params["text"] = key
-            await self._cdp.send("Input.dispatchKeyEvent", params)
-        except Exception:
-            pass
+            if not key:
+                return
+            if msg.get("eventType") == "keyDown":
+                await self.page.keyboard.down(key)
+            else:
+                await self.page.keyboard.up(key)
+        except Exception as e:
+            print(f"Keyboard error ({msg}): {e}")
+
+    async def _handle_insert_text(self, msg):
+        try:
+            text = msg.get("text", "")
+            if text:
+                await self.page.keyboard.insert_text(text)
+        except Exception as e:
+            print(f"InsertText error ({msg}): {e}")
 
     # ─── WebSocket Message Loop ───
 
@@ -270,6 +277,8 @@ class WebRTCBridge:
                     await self._handle_scroll(msg)
                 elif t == "keyboard":
                     await self._handle_keyboard(msg)
+                elif t == "insertText":
+                    await self._handle_insert_text(msg)
 
         except Exception as e:
             print(f"WebRTCBridge[{self.session_id}]: error: {e}")
@@ -290,9 +299,5 @@ class WebRTCBridge:
                 pass
             try:
                 self.page.remove_listener("framenavigated", self._on_navigated)
-            except Exception:
-                pass
-            try:
-                await self._cdp.detach()
             except Exception:
                 pass
