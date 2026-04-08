@@ -33,6 +33,11 @@ async def root():
 
 @app.get("/viewer/{tab_id}")
 async def viewer(tab_id: str):
+    # Auto-create tab if it doesn't exist
+    if not tab_manager.get_tab(tab_id):
+        page = await tab_manager.create_tab(tab_id)
+        await page.goto("https://www.google.com")
+    
     viewer_file = static_dir / "viewer.html"
     if not viewer_file.exists():
         return HTMLResponse("<h1>viewer.html not found</h1>", status_code=404)

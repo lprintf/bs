@@ -71,6 +71,25 @@ class TabManager:
         print(f"Created new tab: {tab_id}")
         return tab_id, page
 
+    async def create_tab(self, tab_id: str) -> Page:
+        """Create a tab with a specific ID (for on-demand creation via URL)."""
+        if not self.context:
+            raise RuntimeError("TabManager not started")
+        if tab_id in self.tabs:
+            return self.tabs[tab_id]
+        page = await self.context.new_page()
+        self.tabs[tab_id] = page
+        _SUPPRESSED = ["Failed to execute 'postMessage' on 'DOMWindow'"]
+        page.on("console", lambda msg: (
+            None if any(s in msg.text for s in _SUPPRESSED)
+            else print(f"PAGE LOG [{msg.type}]: {msg.text}")
+        ))
+        publisher = TabPublisher(page, tab_id)
+        self.publishers[tab_id] = publisher
+        asyncio.create_task(publisher.start())
+        print(f"Created new tab: {tab_id}")
+        return page
+
     def get_tab(self, tab_id: str) -> Page | None:
         return self.tabs.get(tab_id)
 
