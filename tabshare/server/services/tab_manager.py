@@ -25,6 +25,9 @@ class TabManager:
                 "--use-fake-ui-for-media-stream",
                 "--auto-select-desktop-capture-source=Entire screen",
                 "--disable-features=WebRtcHideLocalIpsWithMdns",
+                "--disable-web-security",
+                "--allow-running-insecure-content",
+                "--unsafely-treat-insecure-origin-as-secure=ws://livekit:7880,http://livekit:7880",
             ],
         }
         

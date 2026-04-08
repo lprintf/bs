@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  livekit:
+    image: livekit/livekit-server:latest
+    network_mode: "host"
+    command: --config /etc/livekit.yaml
+    restart: unless-stopped
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+    environment:
+      # These keys match the ones configured in our tabshare backend
+      - "LIVEKIT_KEYS=devkey: secret"
+
+  tabshare:
+    build: ./tabshare
+    restart: unless-stopped
+    ports:
+      - "8085:8085"
+    volumes:
+      - ./tabshare:/app
+    shm_size: '2gb'
+    environment:
+      # Backend LiveKit config
+      - LIVEKIT_URL=http://192.168.9.39:7880
+      - LIVEKIT_API_KEY=devkey
+      - LIVEKIT_API_SECRET=secret
+      # Note: Frontend needs the PUBLIC LiveKit URL (e.g. your tunnel)
+      # For local testing without tunnel, browser uses localhost. 
+      # Since we are using an HTTP tunnel, we can leave this as 127.0.0.1 or point to the tunnel.
+      - PUBLIC_LIVEKIT_URL=http://192.168.9.39:7880

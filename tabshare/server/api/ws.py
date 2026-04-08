@@ -14,5 +14,5 @@ async def websocket_endpoint(websocket: WebSocket, tab_id: str):
         await websocket.close()
         return
 
-    bridge = WebRTCBridge(page, websocket)
+    bridge = WebRTCBridge(page, websocket, tab_id)
     await bridge.start()

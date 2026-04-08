@@ -7,9 +7,10 @@ from playwright.async_api import Page
 
 
 class WebRTCBridge:
-    def __init__(self, page: Page, websocket: WebSocket):
+    def __init__(self, page: Page, websocket: WebSocket, tab_id: str):
         self.page = page
         self.websocket = websocket
+        self.tab_id = tab_id
         self.session_id = uuid.uuid4().hex[:8]  # unique per viewer
         self._closed = False
         self._nav_task: asyncio.Task | None = None
@@ -74,138 +75,75 @@ class WebRTCBridge:
         except Exception:
             pass
 
+        # If already ready, return immediately
         try:
-            await self.page.evaluate("""() => {
-                if (window._webrtc && window._webrtc.ready && window._webrtc.stream) {
-                    const tracks = window._webrtc.stream.getVideoTracks();
-                    if (tracks.length > 0 && tracks[0].readyState === 'live') {
-                        console.log("Reusing existing stream:", window._webrtc.stream.id);
-                        return;
-                    }
-                    console.log("Stream dead, re-capturing...");
-                }
+            is_ready = await self.page.evaluate("() => !!(window._webrtc && window._webrtc.ready)")
+            if is_ready:
+                return True
+        except Exception:
+            pass
+
+        from server.config import LIVEKIT_URL
+        from server.services.livekit_helpers import generate_publisher_token
+
+        try:
+            # Inject SDK directly from the downloaded vendor file
+            # Inside the container, this is mounted at /app/server/static/vendor/...
+            await self.page.add_script_tag(path="server/static/vendor/livekit-client.umd.min.js")
+        except Exception as e:
+            print(f"WebRTCBridge[{self.session_id}]: failed to inject LiveKit SDK: {e}")
+            return False
+
+        token = generate_publisher_token(self.tab_id)
+
+        try:
+            # Proxy WebSocket to avoid Google CSP / Mixed Content
+            proxy_url = "http://127.0.0.1:8085/livekit-proxy"
+            ready = await self.page.evaluate("""async ([url, token]) => {
+                if (window._webrtc && window._webrtc.ready) return "ready";
                 window._webrtc = window._webrtc || {};
-                window._webrtc.stream = null;
-                window._webrtc.ready = false;
-                window._webrtc.pcs = window._webrtc.pcs || {};
-
-                (async () => {
-                    try {
-                        const stream = await navigator.mediaDevices.getDisplayMedia({
-                            audio: false,
-                            video: { displaySurface: "browser" },
-                            preferCurrentTab: true
-                        });
-                        console.log("getDisplayMedia success:", stream.id);
-                        window._webrtc.stream = stream;
-                        window._webrtc.ready = true;
-                    } catch(e) {
-                        console.error("getDisplayMedia failed:", e.name, e.message);
-                    }
-                })();
-            }""")
-        except Exception as e:
-            print(f"WebRTCBridge[{self.session_id}]: capture eval failed: {e}")
-            return False
-
-        try:
-            ready = await self.page.evaluate("""() => {
-                return new Promise((resolve) => {
-                    if (window._webrtc && window._webrtc.ready) { resolve("ready"); return; }
-                    const check = setInterval(() => {
-                        if (window._webrtc && window._webrtc.ready) { clearInterval(check); resolve("ready"); }
-                    }, 50);
-                    setTimeout(() => { clearInterval(check); resolve("timeout"); }, 5000);
-                });
-            }""")
-        except Exception as e:
-            print(f"WebRTCBridge[{self.session_id}]: wait eval failed: {e}")
-            return False
-
-        if ready != "ready":
-            print(f"WebRTCBridge[{self.session_id}]: capture timeout")
-            return False
-
-        try:
-            info = await self.page.evaluate("""() => {
-                const t = window._webrtc.stream.getVideoTracks()[0];
-                const s = t.getSettings();
-                return JSON.stringify({w:s.width, h:s.height, fps:s.frameRate});
-            }""")
-            print(f"WebRTCBridge[{self.session_id}]: stream {info}")
-        except Exception:
-            pass
-
-        return True
-
-    async def _handle_offer(self, offer_sdp):
-        sid = self.session_id
-        try:
-            result = await self.page.evaluate("""async ([offerSdp, sid]) => {
-                if (!window._webrtc || !window._webrtc.stream) {
-                    throw new Error("No stream available");
+                
+                try {
+                    console.log("Getting display media...");
+                    const stream = await navigator.mediaDevices.getDisplayMedia({
+                        audio: false,
+                        video: { displaySurface: "browser" },
+                        preferCurrentTab: true
+                    });
+                    
+                    console.log("Connecting to room...");
+                    // The SDK exposes the global "LivekitClient" object
+                    const room = new LivekitClient.Room();
+                    await room.connect(url, token);
+                    console.log("Room connected!");
+                    
+                    const track = stream.getVideoTracks()[0];
+                    console.log("Publishing track...");
+                    await room.localParticipant.publishTrack(track, {
+                        name: "screen",
+                        simulcast: false,
+                        source: LivekitClient.Track.Source.ScreenShare
+                    });
+                    console.log("Track published!");
+                    
+                    window._webrtc.stream = stream;
+                    window._webrtc.room = room;
+                    window._webrtc.ready = true;
+                    return "ready";
+                } catch(e) {
+                    console.error("Livekit Error:", e);
+                    return e.toString();
                 }
-                if (!window._webrtc.pcs) window._webrtc.pcs = {};
-
-                // Close old PC for this session
-                if (window._webrtc.pcs[sid]) {
-                    try { window._webrtc.pcs[sid].close(); } catch(e) {}
-                }
-
-                const pc = new RTCPeerConnection({
-                    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-                });
-                window._webrtc.pcs[sid] = pc;
-
-                window._webrtc.stream.getTracks().forEach(track => {
-                    pc.addTrack(track, window._webrtc.stream);
-                });
-
-                const candidates = [];
-                const gatheringComplete = new Promise((resolve) => {
-                    pc.onicecandidate = (e) => {
-                        if (e.candidate) candidates.push(e.candidate.toJSON());
-                        else resolve();
-                    };
-                    setTimeout(resolve, 3000);
-                });
-
-                await pc.setRemoteDescription(new RTCSessionDescription(offerSdp));
-                const answer = await pc.createAnswer();
-                await pc.setLocalDescription(answer);
-                await gatheringComplete;
-
-                console.log("Answer created for session", sid, "ICE:", candidates.length);
-
-                return {
-                    answer: { type: pc.localDescription.type, sdp: pc.localDescription.sdp },
-                    iceCandidates: candidates
-                };
-            }""", [offer_sdp, sid])
+            }""", [proxy_url, token])
+            
+            if ready == "ready":
+                return True
+            else:
+                print(f"WebRTCBridge[{self.session_id}]: SDK publish failed: {ready}")
+                return False
         except Exception as e:
-            print(f"WebRTCBridge[{sid}]: offer eval failed: {e}")
-            return
-
-        if not await self._safe_send({
-            "type": "webrtc", "signal": {"answer": result["answer"]}
-        }):
-            print(f"WebRTCBridge[{sid}]: viewer gone before answer sent")
-            return
-        for ice in result["iceCandidates"]:
-            if not await self._safe_send({"type": "webrtc", "signal": {"ice": ice}}):
-                return
-        print(f"WebRTCBridge[{sid}]: sent answer + {len(result['iceCandidates'])} ICE")
-
-    async def _handle_ice(self, ice_candidate):
-        sid = self.session_id
-        try:
-            await self.page.evaluate("""async ([ice, sid]) => {
-                if (window._webrtc && window._webrtc.pcs && window._webrtc.pcs[sid]) {
-                    await window._webrtc.pcs[sid].addIceCandidate(new RTCIceCandidate(ice));
-                }
-            }""", [ice_candidate, sid])
-        except Exception:
-            pass
+            print(f"WebRTCBridge[{self.session_id}]: LiveKit publish eval failed: {e}")
+            return False
 
     # ─── Input Dispatch (via Playwright API) ───
 
@@ -265,13 +203,7 @@ class WebRTCBridge:
                 msg = json.loads(raw)
                 t = msg.get("type")
 
-                if t == "webrtc":
-                    signal = msg.get("signal", {})
-                    if "offer" in signal:
-                        await self._handle_offer(signal["offer"])
-                    elif "ice" in signal:
-                        await self._handle_ice(signal["ice"])
-                elif t == "mouse":
+                if t == "mouse":
                     await self._handle_mouse(msg)
                 elif t == "scroll":
                     await self._handle_scroll(msg)
@@ -286,17 +218,6 @@ class WebRTCBridge:
         finally:
             self._closed = True
             print(f"WebRTCBridge[{self.session_id}]: viewer disconnected")
-            # Clean up session PC on page
-            sid = self.session_id
-            try:
-                await self.page.evaluate("""(sid) => {
-                    if (window._webrtc && window._webrtc.pcs && window._webrtc.pcs[sid]) {
-                        try { window._webrtc.pcs[sid].close(); } catch(e) {}
-                        delete window._webrtc.pcs[sid];
-                    }
-                }""", sid)
-            except Exception:
-                pass
             try:
                 self.page.remove_listener("framenavigated", self._on_navigated)
             except Exception:

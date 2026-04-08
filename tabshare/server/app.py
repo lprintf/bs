@@ -3,7 +3,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from server.services.tab_manager import tab_manager
-from server.api import ws
+from server.api import ws, livekit_api, ws_proxy
 from contextlib import asynccontextmanager
 
 @asynccontextmanager
@@ -19,6 +19,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 app.include_router(ws.router)
+app.include_router(livekit_api.router)
+app.include_router(ws_proxy.router)
 
 # Mount static files
 static_dir = Path(__file__).parent / "static"
