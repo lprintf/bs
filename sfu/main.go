@@ -13,6 +13,7 @@ import (
 
 	"github.com/pion/ice/v4"
 	"github.com/pion/rtcp"
+	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
 )
 
@@ -22,6 +23,12 @@ type Room struct {
 	videoTrack  *webrtc.TrackLocalStaticRTP
 	publisher   *webrtc.PeerConnection
 	subscribers []*webrtc.PeerConnection
+	// RTP sequence/timestamp continuity across publisher reconnects
+	seqOffset uint16
+	tsOffset  uint32
+	lastSeq   uint16
+	lastTS    uint32
+	seqReset  bool
 }
 
 var (
@@ -152,41 +159,38 @@ func handlePublisher(room *Room, offer webrtc.SessionDescription) (*webrtc.Sessi
 		return nil, fmt.Errorf("new pc: %w", err)
 	}
 
-	// Always create a fresh track to avoid RTP sequence discontinuity
-	videoTrack, vtErr := webrtc.NewTrackLocalStaticRTP(
-		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8},
-		"video", "tabshare",
-	)
-	if vtErr != nil {
-		return nil, fmt.Errorf("new track: %w", vtErr)
-	}
-
+	// Reuse existing track (subscribers stay connected)
 	room.mu.Lock()
-	room.videoTrack = videoTrack
+	if room.videoTrack == nil {
+		vt, vtErr := webrtc.NewTrackLocalStaticRTP(
+			webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8},
+			"video", "tabshare",
+		)
+		if vtErr != nil {
+			room.mu.Unlock()
+			return nil, fmt.Errorf("new track: %w", vtErr)
+		}
+		room.videoTrack = vt
+	}
+	videoTrack := room.videoTrack
 	oldPC := room.publisher
 	room.publisher = pc
-	// Close all existing subscribers (they'll auto-reconnect with clean decoder)
-	oldSubs := room.subscribers
-	room.subscribers = nil
+	// Signal sequence reset for next RTP packet
+	room.seqReset = true
 	room.mu.Unlock()
 
 	if oldPC != nil {
 		log.Printf("[pub] closing old publisher connection")
 		oldPC.Close()
 	}
-	for _, sub := range oldSubs {
-		log.Printf("[pub] closing subscriber for clean reconnect")
-		sub.Close()
-	}
 
 	pc.OnTrack(func(remoteTrack *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
 		log.Printf("[pub] got track: %s codec=%s", remoteTrack.ID(), remoteTrack.Codec().MimeType)
 
-		// Send periodic PLI to ensure regular keyframes (compensates for no NACK/jitter buffer)
+		// Send periodic PLI to ensure regular keyframes
 		go func() {
 			ticker := time.NewTicker(2 * time.Second)
 			defer ticker.Stop()
-			// Immediate first PLI
 			pc.WriteRTCP([]rtcp.Packet{
 				&rtcp.PictureLossIndication{MediaSSRC: uint32(remoteTrack.SSRC())},
 			})
@@ -200,7 +204,7 @@ func handlePublisher(room *Room, offer webrtc.SessionDescription) (*webrtc.Sessi
 			}
 		}()
 
-		// Read RTP from publisher and write to persistent local track (broadcast)
+		// Read RTP, rewrite seq/ts for continuity, forward to local track
 		buf := make([]byte, 4096)
 		for {
 			n, _, readErr := remoteTrack.Read(buf)
@@ -208,7 +212,28 @@ func handlePublisher(room *Room, offer webrtc.SessionDescription) (*webrtc.Sessi
 				log.Printf("[pub] track read ended: %v", readErr)
 				return
 			}
-			if _, writeErr := videoTrack.Write(buf[:n]); writeErr != nil {
+
+			// Parse, rewrite, write
+			pkt := &rtp.Packet{}
+			if err := pkt.Unmarshal(buf[:n]); err != nil {
+				continue
+			}
+
+			room.mu.Lock()
+			if room.seqReset {
+				// Calculate offsets to maintain continuity
+				room.seqOffset = room.lastSeq - pkt.Header.SequenceNumber + 1
+				room.tsOffset = room.lastTS - pkt.Header.Timestamp + 1
+				room.seqReset = false
+				log.Printf("[pub] RTP rewriter reset: seqOffset=%d tsOffset=%d", room.seqOffset, room.tsOffset)
+			}
+			pkt.Header.SequenceNumber += room.seqOffset
+			pkt.Header.Timestamp += room.tsOffset
+			room.lastSeq = pkt.Header.SequenceNumber
+			room.lastTS = pkt.Header.Timestamp
+			room.mu.Unlock()
+
+			if writeErr := videoTrack.WriteRTP(pkt); writeErr != nil {
 				log.Printf("[pub] track write error: %v", writeErr)
 				return
 			}

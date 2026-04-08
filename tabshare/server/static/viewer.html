@@ -195,8 +195,7 @@
                         showNavOverlay();
                         setStatus('Page loading…', 'connecting');
                     } else if (msg.type === 'nav_done') {
-                        // Publisher ready, immediately reconnect for fresh track
-                        connectSFU();
+                        // Publisher reconnected, track is seamless — no action needed
                     }
                 } catch(e) {}
             };
