@@ -1,31 +1,26 @@
 version: '3.8'
 
 services:
-  livekit:
-    image: livekit/livekit-server:latest
-    network_mode: "host"
-    command: --config /etc/livekit.yaml
+  sfu:
+    build: ./sfu
     restart: unless-stopped
-    volumes:
-      - ./livekit.yaml:/etc/livekit.yaml:ro
+    ports:
+      - "59055:59055/udp"
+      - "59055:59055/tcp"
+      - "8085:8085"  # TabShare HTTP (exposed via shared network)
     environment:
-      # These keys match the ones configured in our tabshare backend
-      - "LIVEKIT_KEYS=devkey: secret"
+      - NAT_IP=${HOST_IP}
+      - UDP_PORT=59055
+      - HTTP_PORT=8088
 
   tabshare:
     build: ./tabshare
     restart: unless-stopped
-    ports:
-      - "8085:8085"
+    network_mode: "service:sfu"
+    depends_on:
+      - sfu
+    shm_size: '2gb'
     volumes:
       - ./tabshare:/app
-    shm_size: '2gb'
     environment:
-      # Backend LiveKit config
-      - LIVEKIT_URL=http://192.168.9.39:7880
-      - LIVEKIT_API_KEY=devkey
-      - LIVEKIT_API_SECRET=secret
-      # Note: Frontend needs the PUBLIC LiveKit URL (e.g. your tunnel)
-      # For local testing without tunnel, browser uses localhost. 
-      # Since we are using an HTTP tunnel, we can leave this as 127.0.0.1 or point to the tunnel.
-      - PUBLIC_LIVEKIT_URL=http://192.168.9.39:7880
+      - SFU_INTERNAL_URL=http://127.0.0.1:8088

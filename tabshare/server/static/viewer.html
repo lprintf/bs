@@ -76,7 +76,7 @@
             letter-spacing: 0.5px;
         }
     </style>
-    <script src="/static/vendor/livekit-client.umd.min.js"></script>
+    <!-- Native WebRTC, no SDK needed -->
 </head>
 <body>
     <div id="status" class="status-connecting">Connecting…</div>
@@ -118,46 +118,63 @@
             navOverlay.classList.remove('visible');
         }
 
-        async function connectLiveKit() {
+        async function connectSFU() {
+            if (pc) { try { pc.close(); } catch(e) {} pc = null; }
             try {
-                // Fetch token
-                setStatus('Fetching token…', 'connecting');
-                const res = await fetch(`/api/livekit-token/${tabId}`);
-                if (!res.ok) throw new Error('Token fetch failed');
-                const { token, url } = await res.json();
-                
                 setStatus('Connecting to stream…', 'connecting');
-                const room = new LivekitClient.Room();
-                
-                room.on('trackSubscribed', (track, publication, participant) => {
-                    if (track.kind === 'video') {
-                        // clear previous track if any
-                        video.srcObject = null;
-                        track.attach(video);
+
+                pc = new RTCPeerConnection({
+                    iceServers: [],
+                    iceTransportPolicy: 'all'
+                });
+
+                // We only receive video, add a transceiver
+                pc.addTransceiver('video', { direction: 'recvonly' });
+
+                pc.ontrack = (ev) => {
+                    console.log('[viewer] got track:', ev.track.kind);
+                    if (ev.track.kind === 'video') {
+                        video.srcObject = ev.streams[0] || new MediaStream([ev.track]);
                         setStatus('Connected', 'connected');
                         hideNavOverlay();
                         imeTrap.focus({ preventScroll: true });
                     }
-                });
+                };
 
-                room.on('trackUnsubscribed', (track, publication, participant) => {
-                    if (track.kind === 'video') {
-                        track.detach(video);
+                pc.oniceconnectionstatechange = () => {
+                    console.log('[viewer] ICE state:', pc.iceConnectionState);
+                    if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+                        setStatus('Disconnected', 'error');
                         showNavOverlay();
-                        setStatus('Page loading…', 'connecting');
+                        setTimeout(connectSFU, 2000);
                     }
+                };
+
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+
+                const res = await fetch(`/api/sfu/offer?room=${tabId}&role=sub`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sdp: pc.localDescription.sdp })
                 });
 
-                room.on('disconnected', () => {
-                    setStatus('Disconnected', 'error');
-                    setTimeout(connectLiveKit, 2000);
-                });
+                if (!res.ok) {
+                    const text = await res.text();
+                    throw new Error(`SFU error: ${res.status} ${text}`);
+                }
 
-                await room.connect(url, token);
+                const answer = await res.json();
+                await pc.setRemoteDescription(new RTCSessionDescription({
+                    type: answer.type,
+                    sdp: answer.sdp
+                }));
+
+                console.log('[viewer] SDP answer set, waiting for ICE+media');
             } catch (e) {
-                console.error("LiveKit connect error:", e);
-                setStatus('Waiting…', 'connecting');
-                setTimeout(connectLiveKit, 2000);
+                console.error('SFU connect error:', e);
+                setStatus('Waiting for publisher…', 'connecting');
+                setTimeout(connectSFU, 3000);
             }
         }
 
@@ -294,7 +311,34 @@
 
         // Initialize connections
         connectWS();
-        connectLiveKit();
+        connectSFU();
+
+        // Frame freeze detection + auto-reconnect fallback
+        let freezeTimer = null;
+        let reconnectTimer = null;
+        function startFrameWatch() {
+            if (!('requestVideoFrameCallback' in HTMLVideoElement.prototype)) return;
+            function onFrame() {
+                hideNavOverlay();
+                setStatus('Connected', 'connected');
+                clearTimeout(freezeTimer);
+                clearTimeout(reconnectTimer);
+                freezeTimer = setTimeout(() => {
+                    if (video.srcObject) {
+                        showNavOverlay();
+                        setStatus('Page loading…', 'connecting');
+                        // If still frozen after 4s total, force reconnect
+                        reconnectTimer = setTimeout(() => {
+                            console.log('[viewer] frozen too long, reconnecting SFU...');
+                            connectSFU();
+                        }, 2000); // 1s + 2s = 3s total
+                    }
+                }, 1000);
+                video.requestVideoFrameCallback(onFrame);
+            }
+            video.requestVideoFrameCallback(onFrame);
+        }
+        video.addEventListener('playing', startFrameWatch, { once: true });
     })();
     </script>
 </body>

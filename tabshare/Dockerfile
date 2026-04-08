@@ -5,7 +5,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 WORKDIR /app
 
 COPY pyproject.toml /app/
-RUN uv pip install --system fastapi uvicorn playwright pydantic websockets livekit-api
+RUN uv pip install --system fastapi uvicorn playwright pydantic httpx websockets
 
 EXPOSE 8085
 

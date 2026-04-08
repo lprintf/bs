@@ -1,13 +1,11 @@
 import asyncio
 import traceback
 from playwright.async_api import Page
-from server.config import LIVEKIT_URL
-from server.services.livekit_helpers import generate_publisher_token
 
 class TabPublisher:
     """
-    Manages capturing a Playwright Page's screen and publishing it
-    to the LiveKit Server. Runs lifecycle independently of viewers.
+    Captures a Playwright Page's screen via getDisplayMedia and publishes
+    it to the pion SFU using native WebRTC (no LiveKit SDK).
     """
     def __init__(self, page: Page, tab_id: str):
         self.page = page
@@ -30,12 +28,9 @@ class TabPublisher:
     async def _handle_navigation(self):
         if self._closed:
             return
-        # Debounce: wait for navigation to settle
-        await asyncio.sleep(1.5)
+        await asyncio.sleep(0.3)
         if self._closed:
             return
-            
-        # Retry up to 3 times to inject and publish tracks
         for attempt in range(3):
             if self._closed:
                 return
@@ -44,7 +39,6 @@ class TabPublisher:
                 print(f"TabPublisher[{self.tab_id[-8:]}]: stream published successfully after navigation")
                 return
             await asyncio.sleep(1)
-            
         print(f"TabPublisher[{self.tab_id[-8:]}]: failed to re-establish stream after 3 attempts")
 
     async def _ensure_stream(self) -> bool:
@@ -53,7 +47,6 @@ class TabPublisher:
         except Exception:
             pass
 
-        # If already ready, return immediately
         try:
             is_ready = await self.page.evaluate("() => !!(window._webrtc && window._webrtc.ready)")
             if is_ready:
@@ -62,54 +55,68 @@ class TabPublisher:
             pass
 
         try:
-            # Inject SDK directly from the downloaded vendor file
-            await self.page.add_script_tag(path="server/static/vendor/livekit-client.umd.min.js")
-        except Exception as e:
-            print(f"TabPublisher[{self.tab_id[-8:]}]: failed to inject LiveKit SDK: {e}")
-            return False
-
-        token = generate_publisher_token(self.tab_id)
-
-        try:
-            proxy_url = "http://127.0.0.1:8085/livekit-proxy"
-            ready = await self.page.evaluate("""async ([url, token]) => {
+            # Use SFU internal URL (127.0.0.1 since we share network namespace)
+            sfu_url = "http://127.0.0.1:8088/offer"
+            room = self.tab_id
+            ready = await self.page.evaluate("""async ([sfuUrl, room]) => {
                 if (window._webrtc && window._webrtc.ready) return "ready";
                 window._webrtc = window._webrtc || {};
-                
+
                 try {
                     const stream = await navigator.mediaDevices.getDisplayMedia({
                         audio: false,
                         video: { displaySurface: "browser" },
                         preferCurrentTab: true
                     });
-                    
-                    const room = new LivekitClient.Room();
-                    await room.connect(url, token);
-                    
-                    const track = stream.getVideoTracks()[0];
-                    await room.localParticipant.publishTrack(track, {
-                        name: "screen",
-                        simulcast: false,
-                        source: LivekitClient.Track.Source.ScreenShare
+
+                    const pc = new RTCPeerConnection({
+                        iceServers: [],
+                        iceTransportPolicy: "all"
                     });
-                    
+
+                    stream.getVideoTracks().forEach(t => pc.addTrack(t, stream));
+
+                    const offer = await pc.createOffer();
+                    await pc.setLocalDescription(offer);
+
+                    const res = await fetch(sfuUrl + "?room=" + room + "&role=pub", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ sdp: pc.localDescription.sdp })
+                    });
+
+                    if (!res.ok) throw new Error("SFU offer failed: " + res.status);
+                    const answer = await res.json();
+                    await pc.setRemoteDescription(new RTCSessionDescription({
+                        type: answer.type,
+                        sdp: answer.sdp
+                    }));
+
                     window._webrtc.stream = stream;
-                    window._webrtc.room = room;
+                    window._webrtc.pc = pc;
                     window._webrtc.ready = true;
+
+                    pc.oniceconnectionstatechange = () => {
+                        console.log("[pub] ICE state:", pc.iceConnectionState);
+                        if (pc.iceConnectionState === "failed" || pc.iceConnectionState === "disconnected") {
+                            window._webrtc.ready = false;
+                        }
+                    };
+
                     return "ready";
                 } catch(e) {
                     return e.toString();
                 }
-            }""", [proxy_url, token])
-            
+            }""", [sfu_url, room])
+
             if ready == "ready":
-                print(f"TabPublisher[{self.tab_id[-8:]}]: LiveKit stream injected and published")
+                print(f"TabPublisher[{self.tab_id[-8:]}]: stream published to SFU")
                 return True
             else:
-                print(f"TabPublisher[{self.tab_id[-8:]}]: SDK publish failed: {ready}")
+                print(f"TabPublisher[{self.tab_id[-8:]}]: SFU publish failed: {ready}")
                 return False
         except Exception as e:
-            print(f"TabPublisher[{self.tab_id[-8:]}]: LiveKit publish eval failed: {e}")
+            print(f"TabPublisher[{self.tab_id[-8:]}]: publish eval failed: {e}")
             return False
 
     def close(self):
