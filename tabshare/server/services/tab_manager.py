@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 from server.config import CHROME_PATH
@@ -11,6 +12,7 @@ class TabManager:
         self.context: BrowserContext | None = None
         self.tabs: dict[str, Page] = {}
         self.publishers: dict[str, TabPublisher] = {}
+        self.viewers: dict[str, list] = {}  # tab_id -> [WebSocket, ...]
         self.tab_counter = 0
 
     async def start(self):
@@ -29,7 +31,7 @@ class TabManager:
                 "--disable-features=WebRtcHideLocalIpsWithMdns",
                 "--disable-web-security",
                 "--allow-running-insecure-content",
-                "--unsafely-treat-insecure-origin-as-secure=ws://livekit:7880,http://livekit:7880",
+                "--unsafely-treat-insecure-origin-as-secure=http://127.0.0.1:8088",
             ],
         }
         
@@ -81,5 +83,27 @@ class TabManager:
             page = self.tabs.pop(tab_id)
             if not page.is_closed():
                 await page.close()
+
+    def add_viewer(self, tab_id: str, ws):
+        if tab_id not in self.viewers:
+            self.viewers[tab_id] = []
+        self.viewers[tab_id].append(ws)
+
+    def remove_viewer(self, tab_id: str, ws):
+        if tab_id in self.viewers:
+            try:
+                self.viewers[tab_id].remove(ws)
+            except ValueError:
+                pass
+
+    async def broadcast_to_viewers(self, tab_id: str, event: dict):
+        """Push an event to all viewers of a tab."""
+        viewers = self.viewers.get(tab_id, [])
+        msg = json.dumps(event)
+        for ws in viewers[:]:
+            try:
+                await ws.send_text(msg)
+            except Exception:
+                pass
 
 tab_manager = TabManager()

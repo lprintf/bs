@@ -14,9 +14,9 @@ async def websocket_endpoint(websocket: WebSocket, tab_id: str):
         await websocket.close()
         return
 
-    # Keep track of active viewers
-    # A fully fleshed server might track viewer sessions and broadcast events.
-    # For interactions, we directly relay to the Playwright page.
+    # Register this viewer for server-push events
+    tab_manager.add_viewer(tab_id, websocket)
+
     try:
         while True:
             raw = await websocket.receive_text()
@@ -52,10 +52,11 @@ async def websocket_endpoint(websocket: WebSocket, tab_id: str):
                     await page.keyboard.insert_text(text)
                     
     except (WebSocketDisconnect, RuntimeError):
-        print(f"Viewer websocket disconnected from tab {tab_id}")
+        pass
     except Exception as e:
         print(f"WebSocket Error: {e}")
     finally:
+        tab_manager.remove_viewer(tab_id, websocket)
         try:
             await websocket.close()
         except Exception:

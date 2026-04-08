@@ -1,11 +1,11 @@
 import asyncio
-import traceback
 from playwright.async_api import Page
 
 class TabPublisher:
     """
     Captures a Playwright Page's screen via getDisplayMedia and publishes
-    it to the pion SFU using native WebRTC (no LiveKit SDK).
+    it to the pion SFU using native WebRTC. Sends navigation events to
+    viewers via tab_manager broadcast.
     """
     def __init__(self, page: Page, tab_id: str):
         self.page = page
@@ -20,7 +20,7 @@ class TabPublisher:
 
     def _on_navigated(self, frame):
         if frame == self.page.main_frame:
-            print(f"TabPublisher[{self.tab_id[-8:]}]: page navigated, preparing to reconnect stream")
+            print(f"TabPublisher[{self.tab_id[-8:]}]: page navigated")
             if self._nav_task and not self._nav_task.done():
                 self._nav_task.cancel()
             self._nav_task = asyncio.ensure_future(self._handle_navigation())
@@ -28,6 +28,8 @@ class TabPublisher:
     async def _handle_navigation(self):
         if self._closed:
             return
+        # Immediately notify viewers
+        await self._broadcast({"type": "nav_start"})
         await asyncio.sleep(0.3)
         if self._closed:
             return
@@ -36,10 +38,16 @@ class TabPublisher:
                 return
             print(f"TabPublisher[{self.tab_id[-8:]}]: re-establish attempt {attempt + 1}/3")
             if await self._ensure_stream():
-                print(f"TabPublisher[{self.tab_id[-8:]}]: stream published successfully after navigation")
+                print(f"TabPublisher[{self.tab_id[-8:]}]: stream published successfully")
+                await self._broadcast({"type": "nav_done"})
                 return
             await asyncio.sleep(1)
-        print(f"TabPublisher[{self.tab_id[-8:]}]: failed to re-establish stream after 3 attempts")
+        print(f"TabPublisher[{self.tab_id[-8:]}]: failed to re-establish after 3 attempts")
+
+    async def _broadcast(self, event: dict):
+        """Send event to all viewers of this tab."""
+        from server.services.tab_manager import tab_manager
+        await tab_manager.broadcast_to_viewers(self.tab_id, event)
 
     async def _ensure_stream(self) -> bool:
         try:
@@ -55,12 +63,16 @@ class TabPublisher:
             pass
 
         try:
-            # Use SFU internal URL (127.0.0.1 since we share network namespace)
             sfu_url = "http://127.0.0.1:8088/offer"
             room = self.tab_id
             ready = await self.page.evaluate("""async ([sfuUrl, room]) => {
                 if (window._webrtc && window._webrtc.ready) return "ready";
                 window._webrtc = window._webrtc || {};
+
+                // Close old PC if exists
+                if (window._webrtc.pc) {
+                    try { window._webrtc.pc.close(); } catch(e) {}
+                }
 
                 try {
                     const stream = await navigator.mediaDevices.getDisplayMedia({

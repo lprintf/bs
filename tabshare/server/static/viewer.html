@@ -138,6 +138,8 @@
                         setStatus('Connected', 'connected');
                         hideNavOverlay();
                         imeTrap.focus({ preventScroll: true });
+                        // Re-register frame watch for new stream
+                        if (typeof startFrameWatch === 'function') startFrameWatch();
                     }
                 };
 
@@ -184,6 +186,19 @@
 
             ws.onopen = () => {
                 setStatus('Waiting for stream…', 'connecting');
+            };
+
+            ws.onmessage = (ev) => {
+                try {
+                    const msg = JSON.parse(ev.data);
+                    if (msg.type === 'nav_start') {
+                        showNavOverlay();
+                        setStatus('Page loading…', 'connecting');
+                    } else if (msg.type === 'nav_done') {
+                        // Publisher ready, immediately reconnect for fresh track
+                        connectSFU();
+                    }
+                } catch(e) {}
             };
 
             ws.onclose = () => {
@@ -313,27 +328,12 @@
         connectWS();
         connectSFU();
 
-        // Frame freeze detection + auto-reconnect fallback
-        let freezeTimer = null;
-        let reconnectTimer = null;
+        // Frame watch: only hides overlay when video frames arrive
         function startFrameWatch() {
             if (!('requestVideoFrameCallback' in HTMLVideoElement.prototype)) return;
             function onFrame() {
                 hideNavOverlay();
                 setStatus('Connected', 'connected');
-                clearTimeout(freezeTimer);
-                clearTimeout(reconnectTimer);
-                freezeTimer = setTimeout(() => {
-                    if (video.srcObject) {
-                        showNavOverlay();
-                        setStatus('Page loading…', 'connecting');
-                        // If still frozen after 4s total, force reconnect
-                        reconnectTimer = setTimeout(() => {
-                            console.log('[viewer] frozen too long, reconnecting SFU...');
-                            connectSFU();
-                        }, 2000); // 1s + 2s = 3s total
-                    }
-                }, 1000);
                 video.requestVideoFrameCallback(onFrame);
             }
             video.requestVideoFrameCallback(onFrame);

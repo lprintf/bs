@@ -152,28 +152,31 @@ func handlePublisher(room *Room, offer webrtc.SessionDescription) (*webrtc.Sessi
 		return nil, fmt.Errorf("new pc: %w", err)
 	}
 
-	// Reuse existing track or create a new one (so subscribers stay connected)
-	room.mu.Lock()
-	if room.videoTrack == nil {
-		vt, vtErr := webrtc.NewTrackLocalStaticRTP(
-			webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8},
-			"video", "tabshare",
-		)
-		if vtErr != nil {
-			room.mu.Unlock()
-			return nil, fmt.Errorf("new track: %w", vtErr)
-		}
-		room.videoTrack = vt
+	// Always create a fresh track to avoid RTP sequence discontinuity
+	videoTrack, vtErr := webrtc.NewTrackLocalStaticRTP(
+		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8},
+		"video", "tabshare",
+	)
+	if vtErr != nil {
+		return nil, fmt.Errorf("new track: %w", vtErr)
 	}
-	videoTrack := room.videoTrack
-	// Close old publisher if exists
+
+	room.mu.Lock()
+	room.videoTrack = videoTrack
 	oldPC := room.publisher
 	room.publisher = pc
+	// Close all existing subscribers (they'll auto-reconnect with clean decoder)
+	oldSubs := room.subscribers
+	room.subscribers = nil
 	room.mu.Unlock()
 
 	if oldPC != nil {
 		log.Printf("[pub] closing old publisher connection")
 		oldPC.Close()
+	}
+	for _, sub := range oldSubs {
+		log.Printf("[pub] closing subscriber for clean reconnect")
+		sub.Close()
 	}
 
 	pc.OnTrack(func(remoteTrack *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
