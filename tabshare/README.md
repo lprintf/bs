@@ -40,7 +40,7 @@ server/
 │   └── ws.py           # WebSocket 端点
 ├── services/
 │   ├── tab_manager.py  # Playwright 浏览器/标签管理
-│   └── webrtc_bridge.py # WebRTC 信令桥接
+│   └── tab_publisher.py # WebRTC 信令桥接
 └── static/
     └── viewer.html     # 前端 viewer
 ```

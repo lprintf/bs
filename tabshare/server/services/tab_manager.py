@@ -2,6 +2,7 @@ import asyncio
 import os
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 from server.config import CHROME_PATH
+from server.services.tab_publisher import TabPublisher
 
 class TabManager:
     def __init__(self):
@@ -9,6 +10,7 @@ class TabManager:
         self.browser = None
         self.context: BrowserContext | None = None
         self.tabs: dict[str, Page] = {}
+        self.publishers: dict[str, TabPublisher] = {}
         self.tab_counter = 0
 
     async def start(self):
@@ -58,6 +60,12 @@ class TabManager:
             None if any(s in msg.text for s in _SUPPRESSED)
             else print(f"PAGE LOG [{msg.type}]: {msg.text}")
         ))
+        
+        # Instantiate and start the Tab Publisher
+        publisher = TabPublisher(page, tab_id)
+        self.publishers[tab_id] = publisher
+        asyncio.create_task(publisher.start())
+        
         print(f"Created new tab: {tab_id}")
         return tab_id, page
 
@@ -65,6 +73,10 @@ class TabManager:
         return self.tabs.get(tab_id)
 
     async def close_tab(self, tab_id: str):
+        if tab_id in self.publishers:
+            pub = self.publishers.pop(tab_id)
+            pub.close()
+            
         if tab_id in self.tabs:
             page = self.tabs.pop(tab_id)
             if not page.is_closed():

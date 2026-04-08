@@ -176,21 +176,6 @@
 
             ws.onerror = () => {};
 
-            ws.onmessage = async (event) => {
-                const msg = JSON.parse(event.data);
-                if (msg.type !== 'webrtc') return;
-                const signal = msg.signal;
-                try {
-                    // We only use the websocket to receive navigation hints now
-                    if (signal.navigating) {
-                        console.log('Page navigating…');
-                        showNavOverlay();
-                        setStatus('Page loading…', 'connecting');
-                    }
-                } catch(e) {
-                    console.error('Signal error:', e);
-                }
-            };
         }
 
         // ─── Input Mapping ───

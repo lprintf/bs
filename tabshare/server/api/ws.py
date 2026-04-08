@@ -1,6 +1,6 @@
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from server.services.tab_manager import tab_manager
-from server.services.webrtc_bridge import WebRTCBridge
+import json
 
 router = APIRouter()
 
@@ -14,5 +14,49 @@ async def websocket_endpoint(websocket: WebSocket, tab_id: str):
         await websocket.close()
         return
 
-    bridge = WebRTCBridge(page, websocket, tab_id)
-    await bridge.start()
+    # Keep track of active viewers
+    # A fully fleshed server might track viewer sessions and broadcast events.
+    # For interactions, we directly relay to the Playwright page.
+    try:
+        while True:
+            raw = await websocket.receive_text()
+            msg = json.loads(raw)
+            t = msg.get("type")
+
+            if t == "mouse":
+                btn = msg.get("button", "none")
+                pw_btn = "left" if btn == "left" else "middle" if btn == "middle" else "right"
+                x, y = msg.get("x", 0), msg.get("y", 0)
+
+                if msg.get("eventType") == "mouseMoved":
+                    await page.mouse.move(x, y)
+                elif msg.get("eventType") == "mousePressed":
+                    await page.mouse.down(button=pw_btn if btn != "none" else "left")
+                elif msg.get("eventType") == "mouseReleased":
+                    await page.mouse.up(button=pw_btn if btn != "none" else "left")
+                    
+            elif t == "scroll":
+                await page.mouse.wheel(msg.get("deltaX", 0), msg.get("deltaY", 0))
+                
+            elif t == "keyboard":
+                key = msg.get("key", "")
+                if key:
+                    if msg.get("eventType") == "keyDown":
+                        await page.keyboard.down(key)
+                    else:
+                        await page.keyboard.up(key)
+                        
+            elif t == "insertText":
+                text = msg.get("text", "")
+                if text:
+                    await page.keyboard.insert_text(text)
+                    
+    except (WebSocketDisconnect, RuntimeError):
+        print(f"Viewer websocket disconnected from tab {tab_id}")
+    except Exception as e:
+        print(f"WebSocket Error: {e}")
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
