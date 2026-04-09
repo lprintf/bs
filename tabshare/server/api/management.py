@@ -2,9 +2,11 @@
 Management API — Browser and Tab CRUD
 """
 from typing import Optional
-from fastapi import APIRouter, HTTPException
+from pathlib import Path
+from fastapi import APIRouter, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from server.services.browser_manager import browser_manager
+from server.services.browser_instance import UPLOADS_DIR
 
 router = APIRouter(prefix="/api/admin", tags=["Management"])
 
@@ -256,3 +258,63 @@ async def kick_viewer(tab_id: str, viewer_index: int):
         pass
     browser_manager.remove_viewer(tab_id, ws)
     return {"success": True}
+
+
+# ── File Transfer ──
+
+@router.post("/browsers/{browser_id}/tabs/{tab_id}/upload")
+async def upload_file(
+    browser_id: str,
+    tab_id: str,
+    file: UploadFile = File(...),
+    set_input: str | None = None,
+):
+    """Upload a file. If set_input is a CSS selector, set it on that file input."""
+    browser = browser_manager.get_browser(browser_id)
+    if not browser:
+        raise HTTPException(status_code=404, detail=f"Browser {browser_id} not found")
+    tab = browser.tabs.get(tab_id)
+    if not tab:
+        raise HTTPException(status_code=404, detail=f"Tab {tab_id} not found")
+
+    # Save file
+    tab_dir = UPLOADS_DIR / tab_id
+    tab_dir.mkdir(parents=True, exist_ok=True)
+    save_path = tab_dir / file.filename
+    content = await file.read()
+    save_path.write_bytes(content)
+
+    result = {"filename": file.filename, "size": len(content), "path": str(save_path)}
+
+    # Auto-inject via pending file chooser dialog
+    if tab.pending_filechooser:
+        try:
+            await tab.pending_filechooser.set_files(str(save_path))
+            tab.pending_filechooser = None
+            result["injected"] = True
+            result["method"] = "filechooser"
+        except Exception as e:
+            result["inject_error"] = str(e)
+            tab.pending_filechooser = None
+    # Fallback: inject into a <input type="file"> via CSS selector
+    elif set_input:
+        try:
+            await tab.page.set_input_files(set_input, str(save_path))
+            result["injected"] = True
+            result["method"] = "set_input"
+        except Exception as e:
+            result["inject_error"] = str(e)
+
+    return result
+
+
+@router.get("/browsers/{browser_id}/tabs/{tab_id}/downloads")
+async def list_downloads(browser_id: str, tab_id: str):
+    """List files downloaded by the remote browser tab."""
+    browser = browser_manager.get_browser(browser_id)
+    if not browser:
+        raise HTTPException(status_code=404, detail=f"Browser {browser_id} not found")
+    tab = browser.tabs.get(tab_id)
+    if not tab:
+        raise HTTPException(status_code=404, detail=f"Tab {tab_id} not found")
+    return {"downloads": tab.downloads}

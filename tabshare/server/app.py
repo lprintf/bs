@@ -63,6 +63,22 @@ async def sfu_offer_proxy(request: Request):
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=502)
 
+
+# ── File serving ──
+from server.services.browser_instance import DOWNLOADS_DIR
+
+@app.get("/api/files/{tab_id}/{filename}")
+async def serve_download(tab_id: str, filename: str):
+    """Serve a file downloaded by the remote browser."""
+    file_path = DOWNLOADS_DIR / tab_id / filename
+    if not file_path.exists() or not file_path.is_file():
+        return JSONResponse({"error": "File not found"}, status_code=404)
+    return FileResponse(
+        str(file_path),
+        filename=filename,
+        media_type="application/octet-stream",
+    )
+
 if __name__ == "__main__":
     import uvicorn
     from server.config import HOST, PORT

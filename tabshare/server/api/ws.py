@@ -33,8 +33,10 @@ async def websocket_endpoint(websocket: WebSocket, tab_id: str):
                 if msg.get("eventType") == "mouseMoved":
                     await page.mouse.move(x, y)
                 elif msg.get("eventType") == "mousePressed":
+                    await page.mouse.move(x, y)
                     await page.mouse.down(button=pw_btn if btn != "none" else "left")
                 elif msg.get("eventType") == "mouseReleased":
+                    await page.mouse.move(x, y)
                     await page.mouse.up(button=pw_btn if btn != "none" else "left")
                     
             elif t == "scroll":

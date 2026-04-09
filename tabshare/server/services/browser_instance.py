@@ -28,6 +28,12 @@ _SUPPRESSED_LOGS = ["Failed to execute 'postMessage' on 'DOMWindow'"]
 
 DEFAULT_VIEWPORT = {"width": 1280, "height": 720}
 
+DATA_DIR = Path("/data")
+DOWNLOADS_DIR = DATA_DIR / "downloads"
+UPLOADS_DIR = DATA_DIR / "uploads"
+DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
+UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+
 
 class TabInfo:
     """Holds state for a single tab within a browser."""
@@ -37,6 +43,8 @@ class TabInfo:
         self.page = page
         self.publisher = publisher
         self.viewers: list = []  # WebSocket connections
+        self.downloads: list[dict] = []  # [{filename, path, size, timestamp}]
+        self.pending_filechooser = None  # Playwright FileChooser object
 
     def to_dict(self) -> dict:
         try:
@@ -102,7 +110,10 @@ class BrowserInstance:
                 launch_kwargs["executable_path"] = CHROME_PATH
 
             browser = await self.playwright.chromium.launch(**launch_kwargs)
-            self.context = await browser.new_context(viewport=DEFAULT_VIEWPORT)
+            self.context = await browser.new_context(
+                viewport=DEFAULT_VIEWPORT,
+                accept_downloads=True,
+            )
             self._browser = browser
 
             self.status = "idle"
@@ -144,8 +155,58 @@ class BrowserInstance:
         self.tabs[tab_id] = tab_info
         asyncio.create_task(publisher.start())
 
+        # Download interception
+        tab_dir = DOWNLOADS_DIR / tab_id
+        tab_dir.mkdir(parents=True, exist_ok=True)
+
+        def on_download(download):
+            asyncio.ensure_future(self._handle_download(tab_info, download, tab_dir))
+        page.on("download", on_download)
+
+        # File chooser interception
+        def on_filechooser(fc):
+            asyncio.ensure_future(self._handle_filechooser(tab_info, fc))
+        page.on("filechooser", on_filechooser)
+
         print(f"[Browser {self.browser_id}] Created tab: {tab_id} → {url}")
         return tab_info
+
+    async def _handle_download(self, tab: TabInfo, download, tab_dir: Path):
+        """Handle a browser download event."""
+        try:
+            filename = download.suggested_filename
+            save_path = tab_dir / filename
+            await download.save_as(str(save_path))
+            size = save_path.stat().st_size
+            import time
+            entry = {
+                "filename": filename,
+                "path": str(save_path),
+                "size": size,
+                "timestamp": time.time(),
+                "download_url": f"/api/files/{tab.tab_id}/{filename}",
+            }
+            tab.downloads.append(entry)
+            print(f"[{tab.tab_id}] Download saved: {filename} ({size} bytes)")
+            # Notify viewers
+            from server.services.browser_manager import browser_manager
+            await browser_manager.broadcast_to_viewers(tab.tab_id, {
+                "type": "download_ready",
+                **entry,
+            })
+        except Exception as e:
+            print(f"[{tab.tab_id}] Download error: {e}")
+
+    async def _handle_filechooser(self, tab: TabInfo, filechooser):
+        """Handle file chooser dialog from the remote page."""
+        tab.pending_filechooser = filechooser
+        is_multi = filechooser.is_multiple()
+        print(f"[{tab.tab_id}] File chooser opened (multiple={is_multi})")
+        from server.services.browser_manager import browser_manager
+        await browser_manager.broadcast_to_viewers(tab.tab_id, {
+            "type": "filechooser_opened",
+            "multiple": is_multi,
+        })
 
     async def close_tab(self, tab_id: str):
         """Close a specific tab."""

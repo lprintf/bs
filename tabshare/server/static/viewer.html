@@ -239,6 +239,36 @@
             transition: all 0.15s;
         }
         .tab-new:hover { color: #4a6cf7; background: #1e1e2e; }
+
+        /* Download toast */
+        .dl-toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #1e1e2e;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 12px 16px;
+            color: #ccc;
+            font-size: 13px;
+            z-index: 2000;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            animation: slideUp 0.3s ease;
+            max-width: 400px;
+        }
+        .dl-toast a { color: #4a6cf7; text-decoration: none; font-weight: 600; }
+        .dl-toast a:hover { text-decoration: underline; }
+        .dl-toast .dl-close {
+            cursor: pointer; color: #555; font-size: 16px; margin-left: 8px;
+        }
+        .dl-toast .dl-close:hover { color: #f44; }
+        @keyframes slideUp {
+            from { transform: translateY(20px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
     </style>
     <!-- Native WebRTC, no SDK needed -->
 </head>
@@ -255,6 +285,9 @@
         </div>
         <div class="tb-sep"></div>
         <span class="tb-label" id="tabLabel"></span>
+        <div class="tb-sep"></div>
+        <button class="tb-btn sm" onclick="document.getElementById('fileUpload').click()" title="Upload file to remote browser">📎 Upload</button>
+        <input type="file" id="fileUpload" style="display:none" onchange="uploadFile(this)">
         <a href="/admin" class="admin-link">Admin ↗</a>
     </div>
     <!-- Toolbar Row 2: View Controls -->
@@ -462,9 +495,21 @@
                         showNavOverlay();
                         setStatus('Page loading…', 'connecting');
                     } else if (msg.type === 'nav_done') {
-                        // Publisher reconnected, track is seamless — no action needed
-                        // Sync URL bar if url is provided
                         if (msg.url) urlInput.value = msg.url;
+                    } else if (msg.type === 'download_ready') {
+                        showDownloadToast(msg);
+                    } else if (msg.type === 'filechooser_opened') {
+                        console.log('Remote file chooser opened, prompting local file picker');
+                        // Show a toast hint and auto-trigger the file picker
+                        const toast = document.createElement('div');
+                        toast.className = 'dl-toast';
+                        toast.innerHTML = `
+                            📂 <span>Remote page requests a file. Select a file to upload.</span>
+                            <span class="dl-close" onclick="this.parentElement.remove()">×</span>
+                        `;
+                        document.body.appendChild(toast);
+                        setTimeout(() => { if (toast.parentElement) toast.remove(); }, 8000);
+                        document.getElementById('fileUpload').click();
                     }
                 } catch(e) {}
             };
@@ -796,6 +841,53 @@
             }
         }
 
+        // ─── File Transfer ───
+        function showDownloadToast(msg) {
+            const sizeStr = msg.size > 1048576
+                ? (msg.size / 1048576).toFixed(1) + ' MB'
+                : (msg.size / 1024).toFixed(1) + ' KB';
+            const toast = document.createElement('div');
+            toast.className = 'dl-toast';
+            toast.innerHTML = `
+                📥 <span><strong>${msg.filename}</strong> (${sizeStr})</span>
+                <a href="${msg.download_url}" download="${msg.filename}">Download</a>
+                <span class="dl-close" onclick="this.parentElement.remove()">×</span>
+            `;
+            document.body.appendChild(toast);
+            setTimeout(() => { if (toast.parentElement) toast.remove(); }, 15000);
+        }
+
+        async function uploadFile(input) {
+            const file = input.files[0];
+            if (!file) return;
+            const formData = new FormData();
+            formData.append('file', file);
+            try {
+                const res = await fetch(`/api/admin/browsers/${browserId}/tabs/${activeTabId}/upload`, {
+                    method: 'POST',
+                    body: formData,
+                });
+                const result = await res.json();
+                console.log('Upload result:', result);
+                // Show confirmation
+                const toast = document.createElement('div');
+                toast.className = 'dl-toast';
+                const sizeStr = result.size > 1048576
+                    ? (result.size / 1048576).toFixed(1) + ' MB'
+                    : (result.size / 1024).toFixed(1) + ' KB';
+                toast.innerHTML = `
+                    📤 <span>Uploaded <strong>${result.filename}</strong> (${sizeStr})</span>
+                    <span class="dl-close" onclick="this.parentElement.remove()">×</span>
+                `;
+                document.body.appendChild(toast);
+                setTimeout(() => { if (toast.parentElement) toast.remove(); }, 5000);
+            } catch(e) {
+                console.error('Upload error:', e);
+                alert('Upload failed: ' + e.message);
+            }
+            input.value = ''; // Reset for re-upload
+        }
+
         // Expose nav functions for toolbar onclick
         window.navGo = navGo;
         window.navBack = navBack;
@@ -806,6 +898,7 @@
         window.switchTab = switchTab;
         window.closeTab = closeTab;
         window.createNewTab = createNewTab;
+        window.uploadFile = uploadFile;
     })();
     </script>
 </body>
