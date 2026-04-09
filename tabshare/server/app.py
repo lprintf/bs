@@ -1,23 +1,25 @@
 from pathlib import Path
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
-from server.services.tab_manager import tab_manager
-from server.api import ws
+from server.services.browser_manager import browser_manager
+from server.api import ws, management
 from server.config import SFU_URL
 from contextlib import asynccontextmanager
 import httpx
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await tab_manager.start()
-    tab_id, page = await tab_manager.new_tab()
-    await page.goto("https://www.google.com")
+    # Create a default browser with a tab on startup
+    browser = await browser_manager.create_browser(browser_id="b1")
+    tab = await browser.create_tab(url="https://www.google.com")
+    print(f"Default browser ready: {browser.browser_id}, tab: {tab.tab_id}")
     yield
-    await tab_manager.stop()
+    await browser_manager.shutdown()
 
 app = FastAPI(lifespan=lifespan)
 app.include_router(ws.router)
+app.include_router(management.router)
 
 # Mount static files
 static_dir = Path(__file__).parent / "static"
@@ -26,18 +28,17 @@ app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 @app.get("/")
 async def root():
-    if not tab_manager.tabs:
-        return HTMLResponse("<h1>No tabs available</h1>")
-    first_tab_id = list(tab_manager.tabs.keys())[0]
-    return RedirectResponse(f"/viewer/{first_tab_id}")
+    return RedirectResponse("/admin")
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_page():
+    admin_html = static_dir / "admin.html"
+    if admin_html.exists():
+        return FileResponse(admin_html)
+    return HTMLResponse("<h1>Admin page not found</h1>", status_code=404)
 
 @app.get("/viewer/{tab_id}")
 async def viewer(tab_id: str):
-    # Auto-create tab if it doesn't exist
-    if not tab_manager.get_tab(tab_id):
-        page = await tab_manager.create_tab(tab_id)
-        await page.goto("https://www.google.com")
-    
     viewer_file = static_dir / "viewer.html"
     if not viewer_file.exists():
         return HTMLResponse("<h1>viewer.html not found</h1>", status_code=404)

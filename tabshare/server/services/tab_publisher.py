@@ -39,15 +39,15 @@ class TabPublisher:
             print(f"TabPublisher[{self.tab_id[-8:]}]: re-establish attempt {attempt + 1}/3")
             if await self._ensure_stream():
                 print(f"TabPublisher[{self.tab_id[-8:]}]: stream published successfully")
-                await self._broadcast({"type": "nav_done"})
+                await self._broadcast({"type": "nav_done", "url": self.page.url})
                 return
             await asyncio.sleep(1)
         print(f"TabPublisher[{self.tab_id[-8:]}]: failed to re-establish after 3 attempts")
 
     async def _broadcast(self, event: dict):
         """Send event to all viewers of this tab."""
-        from server.services.tab_manager import tab_manager
-        await tab_manager.broadcast_to_viewers(self.tab_id, event)
+        from server.services.browser_manager import browser_manager
+        await browser_manager.broadcast_to_viewers(self.tab_id, event)
 
     async def _ensure_stream(self) -> bool:
         try:
@@ -130,6 +130,25 @@ class TabPublisher:
         except Exception as e:
             print(f"TabPublisher[{self.tab_id[-8:]}]: publish eval failed: {e}")
             return False
+
+    async def refresh_stream(self):
+        """Force re-capture stream (e.g. after viewport resize)."""
+        if self._closed:
+            return
+        print(f"TabPublisher[{self.tab_id[-8:]}]: refreshing stream (viewport changed)")
+        try:
+            await self.page.evaluate("""() => {
+                if (window._webrtc) {
+                    if (window._webrtc.pc) { try { window._webrtc.pc.close(); } catch(e) {} }
+                    if (window._webrtc.stream) {
+                        window._webrtc.stream.getTracks().forEach(t => t.stop());
+                    }
+                    window._webrtc.ready = false;
+                }
+            }""")
+        except Exception:
+            pass
+        await self._ensure_stream()
 
     def close(self):
         self._closed = True

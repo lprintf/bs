@@ -9,4 +9,4 @@ RUN uv pip install --system fastapi uvicorn playwright pydantic httpx websockets
 
 EXPOSE 8085
 
-CMD ["python", "-m", "server.app"]
+CMD ["python", "-u", "-m", "server.app"]

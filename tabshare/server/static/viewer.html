@@ -9,30 +9,147 @@
         body {
             background: #0a0a0f;
             display: flex;
-            justify-content: center;
-            align-items: center;
+            flex-direction: column;
             height: 100vh;
             overflow: hidden;
             font-family: -apple-system, 'Segoe UI', Roboto, sans-serif;
         }
+
+        /* ── Toolbar ── */
+        .toolbar {
+            background: #1e1e2a;
+            border-bottom: 1px solid #2a2a3a;
+            padding: 0 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            height: 42px;
+            flex-shrink: 0;
+            z-index: 1100;
+        }
+        .toolbar-sub {
+            background: #181824;
+            border-bottom: 1px solid #22223a;
+            padding: 0 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            height: 34px;
+            flex-shrink: 0;
+            z-index: 1099;
+        }
+        .tb-btn {
+            background: #2a2a3e;
+            border: 1px solid #3a3a50;
+            color: #ccc;
+            padding: 4px 10px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.15s;
+            line-height: 1;
+            white-space: nowrap;
+        }
+        .tb-btn:hover { background: #3a3a50; color: #fff; }
+        .tb-btn.primary { background: #4a6cf7; border-color: #5b7cf8; color: #fff; }
+        .tb-btn.primary:hover { background: #5b7cf8; }
+        .tb-btn.active { background: #4a6cf7; border-color: #5b7cf8; color: #fff; }
+        .tb-btn.sm { font-size: 12px; padding: 3px 8px; }
+        .url-bar {
+            flex: 1;
+            display: flex;
+            gap: 4px;
+            min-width: 0;
+        }
+        .url-input {
+            flex: 1;
+            background: #12121a;
+            border: 1px solid #2a2a3a;
+            color: #ddd;
+            padding: 4px 10px;
+            border-radius: 5px;
+            font-size: 13px;
+            outline: none;
+            min-width: 0;
+        }
+        .url-input:focus { border-color: #4a6cf7; }
+        .tb-select {
+            background: #12121a;
+            border: 1px solid #2a2a3a;
+            color: #ccc;
+            padding: 3px 6px;
+            border-radius: 5px;
+            font-size: 12px;
+            outline: none;
+            cursor: pointer;
+        }
+        .tb-select:focus { border-color: #4a6cf7; }
+        .tb-sep {
+            width: 1px;
+            height: 20px;
+            background: #2a2a3a;
+            flex-shrink: 0;
+        }
+        .tb-label {
+            color: #667;
+            font-size: 11px;
+            white-space: nowrap;
+        }
+        .tb-info {
+            color: #556;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 11px;
+            white-space: nowrap;
+        }
+        .admin-link {
+            color: #8a8aaa;
+            text-decoration: none;
+            font-size: 12px;
+            padding: 4px 8px;
+            border-radius: 4px;
+            transition: all 0.15s;
+            white-space: nowrap;
+        }
+        .admin-link:hover { color: #4a6cf7; background: rgba(74,108,247,0.1); }
+
+        /* ── Video Area ── */
+        .video-area {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+            position: relative;
+        }
         #screen {
             display: block;
-            max-width: 100vw;
-            max-height: 100vh;
             cursor: default;
             outline: none;
         }
+        /* Scale modes */
+        #screen.scale-fit {
+            max-width: 100%;
+            max-height: 100%;
+            width: auto;
+            height: auto;
+            object-fit: contain;
+        }
+        #screen.scale-fill {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+        #screen.scale-real {
+            width: auto;
+            height: auto;
+        }
         #status {
-            position: fixed;
-            top: 12px;
-            left: 12px;
             font-family: 'SF Mono', 'Fira Code', monospace;
-            font-size: 13px;
-            padding: 6px 12px;
-            border-radius: 6px;
-            z-index: 1000;
-            pointer-events: none;
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 4px;
             transition: opacity 0.5s ease;
+            white-space: nowrap;
         }
         .status-connecting { background: rgba(255,170,0,0.15); color: #ffa500; border: 1px solid rgba(255,170,0,0.3); }
         .status-connected  { background: rgba(0,200,80,0.15); color: #0c6; border: 1px solid rgba(0,200,80,0.3); }
@@ -75,16 +192,108 @@
             font-size: 14px;
             letter-spacing: 0.5px;
         }
+
+        /* ── Tab Bar (View Group) ── */
+        .tab-bar {
+            background: #151520;
+            border-bottom: 1px solid #1e1e2e;
+            display: flex;
+            align-items: stretch;
+            height: 32px;
+            flex-shrink: 0;
+            overflow-x: auto;
+            z-index: 1098;
+        }
+        .tab-bar::-webkit-scrollbar { height: 0; }
+        .tab-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 0 12px;
+            font-size: 12px;
+            color: #777;
+            cursor: pointer;
+            border-right: 1px solid #1e1e2e;
+            white-space: nowrap;
+            transition: all 0.15s;
+            user-select: none;
+        }
+        .tab-item:hover { background: #1e1e2e; color: #aaa; }
+        .tab-item.active { background: #252538; color: #ddd; border-bottom: 2px solid #4a6cf7; }
+        .tab-item .tab-close {
+            font-size: 14px;
+            line-height: 1;
+            color: #555;
+            cursor: pointer;
+            padding: 0 2px;
+            border-radius: 3px;
+        }
+        .tab-item .tab-close:hover { color: #f44; background: rgba(255,60,60,0.15); }
+        .tab-new {
+            display: flex;
+            align-items: center;
+            padding: 0 10px;
+            font-size: 16px;
+            color: #555;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .tab-new:hover { color: #4a6cf7; background: #1e1e2e; }
     </style>
     <!-- Native WebRTC, no SDK needed -->
 </head>
 <body>
-    <div id="status" class="status-connecting">Connecting…</div>
-    <div id="nav-overlay">
-        <div class="spinner"></div>
-        <div class="nav-text">Loading…</div>
+    <!-- Toolbar Row 1: Navigation -->
+    <div class="toolbar" id="toolbar">
+        <button class="tb-btn" onclick="navBack()" title="Back">←</button>
+        <button class="tb-btn" onclick="navForward()" title="Forward">→</button>
+        <button class="tb-btn" onclick="navReload()" title="Reload">↻</button>
+        <div class="tb-sep"></div>
+        <div class="url-bar">
+            <input type="text" id="urlInput" class="url-input" placeholder="Enter URL…">
+            <button class="tb-btn primary" onclick="navGo()">Go</button>
+        </div>
+        <div class="tb-sep"></div>
+        <span class="tb-label" id="tabLabel"></span>
+        <a href="/admin" class="admin-link">Admin ↗</a>
     </div>
-    <video id="screen" autoplay playsinline muted tabindex="-1"></video>
+    <!-- Toolbar Row 2: View Controls -->
+    <div class="toolbar-sub" id="toolbar-sub">
+        <span class="tb-label">Resolution</span>
+        <select class="tb-select" id="resSelect">
+            <option value="auto">Auto (fit window)</option>
+            <option value="1280x720">1280 × 720 (HD)</option>
+            <option value="1366x768">1366 × 768</option>
+            <option value="1440x900">1440 × 900</option>
+            <option value="1600x900">1600 × 900</option>
+            <option value="1920x1080" selected>1920 × 1080 (FHD)</option>
+            <option value="2560x1440">2560 × 1440 (2K)</option>
+            <option value="3840x2160">3840 × 2160 (4K)</option>
+        </select>
+        <div class="tb-sep"></div>
+        <span class="tb-label">Scale</span>
+        <button class="tb-btn sm active" id="scaleFit" onclick="setScale('fit')" title="Fit in window">Fit</button>
+        <button class="tb-btn sm" id="scaleFill" onclick="setScale('fill')" title="Fill window">Fill</button>
+        <button class="tb-btn sm" id="scaleReal" onclick="setScale('real')" title="1:1 pixels">1:1</button>
+        <div class="tb-sep"></div>
+        <button class="tb-btn sm" onclick="toggleFullscreen()" title="Toggle Fullscreen">⛶ Fullscreen</button>
+        <div style="flex:1"></div>
+        <span id="status" class="status-connecting">Connecting…</span>
+        <div class="tb-sep"></div>
+        <span class="tb-info" id="vpInfo">--</span>
+    </div>
+    <!-- Tab Bar (View Group) -->
+    <div class="tab-bar" id="tabBar">
+        <!-- Populated by JS -->
+    </div>
+
+    <div class="video-area" id="videoArea">
+        <div id="nav-overlay">
+            <div class="spinner"></div>
+            <div class="nav-text">Loading…</div>
+        </div>
+        <video id="screen" class="scale-fit" autoplay playsinline muted tabindex="-1"></video>
+    </div>
 
     <!-- Hidden input element for IME support -->
     <textarea id="ime-trap" style="position: absolute; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; z-index: -1;" autofocus></textarea>
@@ -96,6 +305,60 @@
         const navOverlay = document.getElementById('nav-overlay');
         const imeTrap = document.getElementById('ime-trap');
         const tabId = window.location.pathname.split('/').pop();
+        let activeTabId = tabId; // mutable — changes on tab switch
+        const urlInput = document.getElementById('urlInput');
+        const tabLabel = document.getElementById('tabLabel');
+        const tabBar = document.getElementById('tabBar');
+
+        // Extract browser_id from tab_id: "b1_tab_1" → "b1"
+        const parts = tabId.match(/^(.+)_tab_\d+$/);
+        const browserId = parts ? parts[1] : tabId;
+        tabLabel.textContent = activeTabId;
+        document.title = `TabShare - ${activeTabId}`;
+
+        // ── Toolbar Navigation ──
+        async function navApi(path, body) {
+            try {
+                const opts = { method: 'POST', headers: {'Content-Type': 'application/json'} };
+                if (body) opts.body = JSON.stringify(body);
+                const res = await fetch(path, opts);
+                return await res.json();
+            } catch(e) {
+                console.error('Nav error:', e);
+            }
+        }
+
+        function navGo() {
+            let url = urlInput.value.trim();
+            if (!url) return;
+            if (!url.match(/^https?:\/\//)) url = 'https://' + url;
+            urlInput.value = url;
+            navApi(`/api/admin/browsers/${browserId}/tabs/${activeTabId}/navigate`, {url});
+        }
+
+        async function navBack() {
+            const result = await navApi(`/api/admin/browsers/${browserId}/tabs/${activeTabId}/back`);
+            if (result && result.url) urlInput.value = result.url;
+        }
+
+        async function navForward() {
+            const result = await navApi(`/api/admin/browsers/${browserId}/tabs/${activeTabId}/forward`);
+            if (result && result.url) urlInput.value = result.url;
+        }
+
+        function navReload() {
+            if (urlInput.value) {
+                navApi(`/api/admin/browsers/${browserId}/tabs/${activeTabId}/navigate`, {url: urlInput.value});
+            }
+        }
+
+        // Enter key in URL bar
+        urlInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); navGo(); }
+            e.stopPropagation(); // Don't forward to page
+        });
+        // Prevent toolbar inputs from capturing keyboard events meant for the page
+        urlInput.addEventListener('keyup', (e) => e.stopPropagation());
 
         let ws, pc;
         let statusFadeTimer = null;
@@ -155,7 +418,7 @@
                 const offer = await pc.createOffer();
                 await pc.setLocalDescription(offer);
 
-                const res = await fetch(`/api/sfu/offer?room=${tabId}&role=sub`, {
+                const res = await fetch(`/api/sfu/offer?room=${activeTabId}&role=sub`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ sdp: pc.localDescription.sdp })
@@ -182,10 +445,14 @@
 
         function connectWS() {
             const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            ws = new WebSocket(`${protocol}//${location.host}/ws/tab/${tabId}`);
+            ws = new WebSocket(`${protocol}//${location.host}/ws/tab/${activeTabId}`);
 
             ws.onopen = () => {
                 setStatus('Waiting for stream…', 'connecting');
+                applyResolution();
+                loadTabBar();
+                // Connect SFU after viewport is applied (give backend time to resize)
+                setTimeout(connectSFU, 300);
             };
 
             ws.onmessage = (ev) => {
@@ -196,6 +463,8 @@
                         setStatus('Page loading…', 'connecting');
                     } else if (msg.type === 'nav_done') {
                         // Publisher reconnected, track is seamless — no action needed
+                        // Sync URL bar if url is provided
+                        if (msg.url) urlInput.value = msg.url;
                     }
                 } catch(e) {}
             };
@@ -209,18 +478,116 @@
 
         }
 
+        // ─── Resolution & Viewport ───
+        const resSelect = document.getElementById('resSelect');
+        const vpInfo = document.getElementById('vpInfo');
+        let currentRes = {w: 1920, h: 1080}; // default
+
+        function sendViewport(w, h) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'viewport', width: w, height: h }));
+            }
+        }
+
+        function applyResolution() {
+            const val = resSelect.value;
+            let w, h;
+            if (val === 'auto') {
+                const area = document.getElementById('videoArea');
+                w = area.clientWidth;
+                h = area.clientHeight;
+            } else {
+                [w, h] = val.split('x').map(Number);
+            }
+            currentRes = {w, h};
+            sendViewport(w, h);
+            updateVpInfo();
+        }
+
+        function updateVpInfo() {
+            const vw = video.videoWidth || currentRes.w;
+            const vh = video.videoHeight || currentRes.h;
+            vpInfo.textContent = `${vw}×${vh}`;
+        }
+
+        resSelect.addEventListener('change', applyResolution);
+
+        // On window resize, if auto mode, update viewport
+        let _vpTimer = null;
+        window.addEventListener('resize', () => {
+            clearTimeout(_vpTimer);
+            _vpTimer = setTimeout(() => {
+                if (resSelect.value === 'auto') applyResolution();
+            }, 500);
+        });
+
+        // Update info when video metadata loads
+        video.addEventListener('loadedmetadata', updateVpInfo);
+        video.addEventListener('resize', updateVpInfo);
+
+        // ─── Scale Mode ───
+        let currentScale = 'fit';
+        function setScale(mode) {
+            currentScale = mode;
+            video.className = `scale-${mode}`;
+            document.getElementById('scaleFit').classList.toggle('active', mode === 'fit');
+            document.getElementById('scaleFill').classList.toggle('active', mode === 'fill');
+            document.getElementById('scaleReal').classList.toggle('active', mode === 'real');
+        }
+
+        // ─── Fullscreen ───
+        function toggleFullscreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(() => {});
+            } else {
+                document.exitFullscreen();
+            }
+        }
+
         // ─── Input Mapping ───
 
-        function getScale() {
+        function getRenderedVideoRect() {
+            // Calculate the actual rendered rectangle of the video
+            // accounting for object-fit: contain letterboxing
             const rect = video.getBoundingClientRect();
-            const vw = video.videoWidth || rect.width;
-            const vh = video.videoHeight || rect.height;
-            return { sx: vw / rect.width, sy: vh / rect.height, ox: rect.left, oy: rect.top };
+            const vw = video.videoWidth || 1;
+            const vh = video.videoHeight || 1;
+
+            if (currentScale === 'real') {
+                // 1:1 mode: video is at native size, centered
+                return { rx: rect.left, ry: rect.top, rw: rect.width, rh: rect.height, vw, vh };
+            }
+
+            // For fit and fill modes with object-fit: contain
+            const containerAR = rect.width / rect.height;
+            const videoAR = vw / vh;
+            let rw, rh, rx, ry;
+
+            if (videoAR > containerAR) {
+                // Video is wider — letterboxed top/bottom
+                rw = rect.width;
+                rh = rect.width / videoAR;
+                rx = rect.left;
+                ry = rect.top + (rect.height - rh) / 2;
+            } else {
+                // Video is taller — pillarboxed left/right
+                rh = rect.height;
+                rw = rect.height * videoAR;
+                rx = rect.left + (rect.width - rw) / 2;
+                ry = rect.top;
+            }
+            return { rx, ry, rw, rh, vw, vh };
         }
 
         function mapCoords(e) {
-            const { sx, sy, ox, oy } = getScale();
-            return { x: (e.clientX - ox) * sx, y: (e.clientY - oy) * sy };
+            const { rx, ry, rw, rh, vw, vh } = getRenderedVideoRect();
+            const x = ((e.clientX - rx) / rw) * vw;
+            const y = ((e.clientY - ry) / rh) * vh;
+            // Clamp to video bounds
+            return {
+                x: Math.max(0, Math.min(vw, Math.round(x))),
+                y: Math.max(0, Math.min(vh, Math.round(y)))
+            };
         }
 
         function buttonName(b) {
@@ -240,10 +607,19 @@
             const { x, y } = mapCoords(e);
             sendInput({ type: 'mouse', eventType: 'mouseMoved', x, y, button: 'none' });
         });
+        // Helper to check if an element is part of any toolbar/tab-bar
+        function isToolbarElement(el) {
+            return document.getElementById('toolbar').contains(el)
+                || document.getElementById('toolbar-sub').contains(el)
+                || document.getElementById('tabBar').contains(el);
+        }
 
         video.addEventListener('mousedown', (e) => {
             e.preventDefault();
-            imeTrap.focus({ preventScroll: true }); // Keep IME trap focused
+            // Only grab focus if not interacting with toolbar
+            if (!isToolbarElement(document.activeElement)) {
+                imeTrap.focus({ preventScroll: true });
+            }
             const { x, y } = mapCoords(e);
             sendInput({ type: 'mouse', eventType: 'mousePressed', x, y, button: buttonName(e.button) });
         });
@@ -296,36 +672,46 @@
         });
 
         imeTrap.addEventListener('keydown', (e) => {
-            console.log("IME: keydown", { key: e.key, code: e.code, isComposing });
-            // Do not send bare keydowns while composing or if it's the IME modifier key 229
-            if (isComposing || e.keyCode === 229 || e.key === 'Process' || e.key === 'Unidentified') {
-                return;
-            }
-            
-            // Standard control and character keys go here
+            const ae = document.activeElement;
+            if (ae !== imeTrap && isToolbarElement(ae)) return;
+            console.log("IME: keydown", { key: e.key, code: e.code, isComposing, nativeComposing: e.isComposing });
+
+            // Skip if actively composing (use both native and manual flags)
+            if (e.isComposing || isComposing) return;
+            // Skip unknown keys from IME (but NOT keyCode 229 — unreliable on fcitx/ibus)
+            if (e.key === 'Process' || e.key === 'Unidentified') return;
+
             sendInput({ type: 'keyboard', eventType: 'keyDown', key: e.key, code: e.code });
-            
-            // Prevent browser back navigation for backspace
             if (e.key === 'Backspace' || e.key === 'Tab') {
                 e.preventDefault();
             }
         });
 
         imeTrap.addEventListener('keyup', (e) => {
-            if (isComposing || e.keyCode === 229 || e.key === 'Process' || e.key === 'Unidentified') {
-                return;
-            }
+            if (e.isComposing || isComposing) return;
+            if (e.key === 'Process' || e.key === 'Unidentified') return;
             sendInput({ type: 'keyboard', eventType: 'keyUp', key: e.key, code: e.code });
         });
 
-        // Ensure the trap stays focused
-        document.body.addEventListener('click', () => {
-            imeTrap.focus({ preventScroll: true });
+        // Ensure the trap stays focused (but not when toolbar is active)
+        document.body.addEventListener('click', (e) => {
+            if (!isToolbarElement(e.target)) {
+                imeTrap.focus({ preventScroll: true });
+            }
         });
 
-        // Initialize connections
-        connectWS();
-        connectSFU();
+        // ─── Session lifecycle ───
+        function startSession() {
+            if (ws) { ws.onclose = null; ws.close(); }
+            if (pc) { pc.close(); pc = null; }
+            setStatus('Connecting…', 'connecting');
+            showNavOverlay();
+            connectWS();
+            video.addEventListener('playing', startFrameWatch, { once: true });
+        }
+
+        // Initialize
+        startSession();
 
         // Frame watch: only hides overlay when video frames arrive
         function startFrameWatch() {
@@ -338,6 +724,88 @@
             video.requestVideoFrameCallback(onFrame);
         }
         video.addEventListener('playing', startFrameWatch, { once: true });
+
+        // ─── View Group (Tab Bar) ───
+        async function loadTabBar() {
+            try {
+                const data = await fetch(`/api/admin/browsers/${browserId}/tabs`).then(r => r.json());
+                const tabs = data.tabs || [];
+                // Update URL bar with current tab's URL
+                const cur = tabs.find(t => t.tab_id === activeTabId);
+                if (cur && cur.url) urlInput.value = cur.url;
+                // Render tab bar
+                tabBar.innerHTML = tabs.map(t => {
+                    const label = t.tab_id.replace(browserId + '_', '');
+                    const isActive = t.tab_id === activeTabId;
+                    return `<div class="tab-item${isActive ? ' active' : ''}" data-tid="${t.tab_id}">
+                        <span class="tab-title" onclick="switchTab('${t.tab_id}')">${label}</span>
+                        <span class="tab-close" onclick="event.stopPropagation(); closeTab('${t.tab_id}')">×</span>
+                    </div>`;
+                }).join('') + '<div class="tab-new" onclick="createNewTab()" title="New Tab">+</div>';
+            } catch(e) {
+                console.error('loadTabBar error:', e);
+            }
+        }
+
+        function switchTab(newTabId) {
+            if (newTabId === activeTabId) return;
+            activeTabId = newTabId;
+            tabLabel.textContent = activeTabId;
+            document.title = `TabShare - ${activeTabId}`;
+            history.replaceState(null, '', `/viewer/${activeTabId}`);
+            startSession();
+        }
+
+        async function closeTab(tid) {
+            if (!confirm(`Close tab ${tid}?`)) return;
+            try {
+                await fetch(`/api/admin/browsers/${browserId}/tabs/${tid}`, {method: 'DELETE'});
+                if (tid === activeTabId) {
+                    // Switch to another tab if available
+                    const data = await fetch(`/api/admin/browsers/${browserId}/tabs`).then(r => r.json());
+                    const remaining = data.tabs || [];
+                    if (remaining.length > 0) {
+                        switchTab(remaining[0].tab_id);
+                    } else {
+                        tabBar.innerHTML = '<div class="tab-new" onclick="createNewTab()" title="New Tab">+</div>';
+                        setStatus('No tabs', 'error');
+                    }
+                } else {
+                    loadTabBar();
+                }
+            } catch(e) {
+                console.error('closeTab error:', e);
+            }
+        }
+
+        async function createNewTab() {
+            try {
+                const res = await fetch(`/api/admin/browsers/${browserId}/tabs`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        url: 'https://www.google.com',
+                        viewport_width: currentRes.w,
+                        viewport_height: currentRes.h,
+                    }),
+                });
+                const tab = await res.json();
+                if (tab.tab_id) switchTab(tab.tab_id);
+            } catch(e) {
+                console.error('createNewTab error:', e);
+            }
+        }
+
+        // Expose nav functions for toolbar onclick
+        window.navGo = navGo;
+        window.navBack = navBack;
+        window.navForward = navForward;
+        window.navReload = navReload;
+        window.setScale = setScale;
+        window.toggleFullscreen = toggleFullscreen;
+        window.switchTab = switchTab;
+        window.closeTab = closeTab;
+        window.createNewTab = createNewTab;
     })();
     </script>
 </body>
