@@ -19,6 +19,8 @@ class BrowserManager:
         browser_id: Optional[str] = None,
         proxy: Optional[str] = None,
         user_data_dir: Optional[str] = None,
+        locale: Optional[str] = None,
+        timezone: Optional[str] = None,
         auto_start: bool = True,
     ) -> BrowserInstance:
         if not browser_id:
@@ -32,6 +34,8 @@ class BrowserManager:
             browser_id=browser_id,
             proxy=proxy,
             user_data_dir=user_data_dir,
+            locale=locale,
+            timezone=timezone,
         )
         self.browsers[browser_id] = browser
 

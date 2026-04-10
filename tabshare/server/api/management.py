@@ -17,6 +17,8 @@ class CreateBrowserRequest(BaseModel):
     browser_id: Optional[str] = None
     proxy: Optional[str] = None
     user_data_dir: Optional[str] = None
+    locale: Optional[str] = None       # e.g. "en-US", "en-SG"
+    timezone: Optional[str] = None     # e.g. "America/Los_Angeles"
     auto_start: bool = True
 
 
@@ -64,6 +66,8 @@ async def create_browser(req: CreateBrowserRequest):
             browser_id=req.browser_id,
             proxy=req.proxy,
             user_data_dir=req.user_data_dir,
+            locale=req.locale,
+            timezone=req.timezone,
             auto_start=req.auto_start,
         )
         return browser.to_dict()

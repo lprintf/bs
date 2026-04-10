@@ -1,26 +1,29 @@
 """
 BrowserInstance — 管理单个 Playwright persistent context（独立指纹/代理/cookie）
 每个 BrowserInstance 下可有多个 Tab（Page + TabPublisher）
+
+使用 Google Chrome + 指纹注入实现反检测。
 """
 import asyncio
 import json
+from dataclasses import asdict
 from pathlib import Path
 from typing import Optional
 from playwright.async_api import async_playwright, BrowserContext, Page
-from server.config import CHROME_PATH
+from server.config import CHROME_PATH, BROWSER_DATA_DIR
+from server.services.fingerprint import load_or_create_fingerprint, save_fingerprint, Fingerprint
 from server.services.tab_publisher import TabPublisher
 
-# Chromium launch args shared across all instances
+# 反检测启动参数
 BASE_ARGS = [
     "--headless=new",
     "--disable-gpu",
+    "--disable-blink-features=AutomationControlled",
+    "--disable-features=WebRtcHideLocalIpsWithMdns",
     "--no-sandbox",
     "--disable-dev-shm-usage",
     "--use-fake-ui-for-media-stream",
     "--auto-select-desktop-capture-source=Entire screen",
-    "--disable-features=WebRtcHideLocalIpsWithMdns",
-    "--disable-web-security",
-    "--allow-running-insecure-content",
     "--unsafely-treat-insecure-origin-as-secure=http://127.0.0.1:8088",
 ]
 
@@ -33,6 +36,9 @@ DOWNLOADS_DIR = DATA_DIR / "downloads"
 UPLOADS_DIR = DATA_DIR / "uploads"
 DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+
+# stealth.js 模板路径
+_STEALTH_JS_PATH = Path(__file__).parent / "stealth.js"
 
 
 class TabInfo:
@@ -69,25 +75,30 @@ class TabInfo:
 
 
 class BrowserInstance:
-    """Manages one isolated Playwright browser context."""
+    """Manages one isolated Playwright browser context with anti-detect fingerprinting."""
 
     def __init__(
         self,
         browser_id: str,
         proxy: Optional[str] = None,
         user_data_dir: Optional[str] = None,
+        locale: Optional[str] = None,
+        timezone: Optional[str] = None,
     ):
         self.browser_id = browser_id
         self.proxy = proxy
-        self.user_data_dir = user_data_dir or f"data/browsers/{browser_id}"
+        self.user_data_dir = user_data_dir or f"{BROWSER_DATA_DIR}/{browser_id}"
+        self.locale_override = locale
+        self.timezone_override = timezone
         self.status = "closed"  # closed | launching | idle | error
         self.playwright = None
         self.context: Optional[BrowserContext] = None
+        self.fingerprint: Optional[Fingerprint] = None
         self.tabs: dict[str, TabInfo] = {}
         self._tab_counter = 0
 
     async def launch(self):
-        """Start the browser."""
+        """Start the browser with anti-detect fingerprinting."""
         if self.status not in ("closed", "error"):
             print(f"[Browser {self.browser_id}] Already running ({self.status})")
             return
@@ -95,34 +106,128 @@ class BrowserInstance:
         self.status = "launching"
         print(f"[Browser {self.browser_id}] Launching...")
 
+        browser_dir = Path(self.user_data_dir)
+        profile_dir = browser_dir / "profile"
+        profile_dir.mkdir(parents=True, exist_ok=True)
+
+        # 清理上次残留的 Chrome profile 锁文件
+        for lock_file in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
+            lock_path = profile_dir / lock_file
+            if lock_path.exists() or lock_path.is_symlink():
+                lock_path.unlink(missing_ok=True)
+                print(f"[Browser {self.browser_id}] Removed stale lock: {lock_file}")
+
         try:
+            # 1. 加载/生成指纹
+            self.fingerprint = load_or_create_fingerprint(browser_dir, self.browser_id)
+
+            # 2. GeoIP 自动匹配（如果有代理）
+            if self.proxy:
+                from server.services.geoip_utils import extract_ip_from_proxy, lookup_geoip
+                ip = extract_ip_from_proxy(self.proxy)
+                if ip:
+                    geo = lookup_geoip(ip)
+                    if not self.locale_override:
+                        self.fingerprint.locale = geo["locale"]
+                    if not self.timezone_override:
+                        self.fingerprint.timezone = geo["timezone"]
+                    self.fingerprint.latitude = geo["lat"]
+                    self.fingerprint.longitude = geo["lon"]
+                    # 保存更新后的 geoip 信息
+                    save_fingerprint(browser_dir, self.fingerprint)
+
+            # 手动覆盖
+            if self.locale_override:
+                self.fingerprint.locale = self.locale_override
+            if self.timezone_override:
+                self.fingerprint.timezone = self.timezone_override
+
+            # 3. 构建启动参数
+            launch_args = BASE_ARGS.copy()
+            launch_args.append(f"--lang={self.fingerprint.locale}")
+
+            # 4. launch_persistent_context
             self.playwright = await async_playwright().start()
 
-            launch_args = BASE_ARGS.copy()
-            if self.proxy:
-                launch_args.append(f"--proxy-server={self.proxy}")
-
             launch_kwargs = {
-                "headless": True,
+                "user_data_dir": str(profile_dir),
+                "headless": False,  # 由 args 中的 --headless=new 控制
                 "args": launch_args,
+                "ignore_default_args": ["--headless", "--headless=old", "--enable-automation"],
+                "user_agent": self.fingerprint.user_agent,
+                "locale": self.fingerprint.locale,
+                "timezone_id": self.fingerprint.timezone,
+                "geolocation": {
+                    "latitude": self.fingerprint.latitude,
+                    "longitude": self.fingerprint.longitude,
+                },
+                "permissions": ["geolocation"],
+                "viewport": DEFAULT_VIEWPORT,
+                "accept_downloads": True,
             }
             if CHROME_PATH:
                 launch_kwargs["executable_path"] = CHROME_PATH
 
-            browser = await self.playwright.chromium.launch(**launch_kwargs)
-            self.context = await browser.new_context(
-                viewport=DEFAULT_VIEWPORT,
-                accept_downloads=True,
+            # 代理配置 - 使用本地 relay 预注入认证，避免 Playwright 407 重试问题
+            if self.proxy:
+                from server.services.proxy_relay import get_or_create_relay
+                local_proxy_url = await get_or_create_relay(self.proxy)
+                launch_kwargs["proxy"] = {
+                    "server": local_proxy_url,
+                    "bypass": "127.0.0.1,localhost",
+                }
+
+            self.context = await self.playwright.chromium.launch_persistent_context(
+                **launch_kwargs
             )
-            self._browser = browser
+
+            # 5. 注入 stealth 脚本
+            stealth_js = self._build_stealth_script()
+            await self.context.add_init_script(stealth_js)
+
+            # 关闭 persistent context 自带的空白页
+            for page in self.context.pages:
+                if page.url in ("about:blank", "chrome://newtab/"):
+                    await page.close()
 
             self.status = "idle"
-            print(f"[Browser {self.browser_id}] Ready (proxy={self.proxy})")
+            print(
+                f"[Browser {self.browser_id}] Ready "
+                f"(proxy={self.proxy}, fp={self.fingerprint.fingerprint_id}, "
+                f"locale={self.fingerprint.locale}, tz={self.fingerprint.timezone})"
+            )
 
         except Exception as e:
             self.status = "error"
             print(f"[Browser {self.browser_id}] Launch failed: {e}")
             raise
+
+    def _build_stealth_script(self) -> str:
+        """加载 stealth.js 模板并注入指纹数据"""
+        template = _STEALTH_JS_PATH.read_text(encoding="utf-8")
+        fp_json = json.dumps(asdict(self.fingerprint), ensure_ascii=False)
+        return template.replace("{{FINGERPRINT_JSON}}", fp_json)
+
+    @staticmethod
+    def _parse_proxy(proxy_url: str) -> dict | None:
+        """解析代理 URL（与 g2api GeminiLauncher 一致）"""
+        if not proxy_url:
+            return None
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(proxy_url)
+            server = f"{parsed.scheme}://{parsed.hostname}"
+            if parsed.port:
+                server += f":{parsed.port}"
+            proxy_config = {"server": server}
+            if parsed.username:
+                proxy_config["username"] = parsed.username
+            if parsed.password:
+                proxy_config["password"] = parsed.password
+            return proxy_config
+        except Exception as e:
+            print(f"[Proxy] URL 解析失败: {e}")
+            return None
 
     async def create_tab(self, url: str = "about:blank", viewport: dict | None = None) -> TabInfo:
         """Create a new tab (Page) within this browser context."""
@@ -145,7 +250,7 @@ class BrowserInstance:
 
         # Navigate
         try:
-            await page.goto(url, timeout=15000)
+            await page.goto(url, timeout=60000, wait_until="domcontentloaded")
         except Exception as e:
             print(f"[{tab_id}] Navigation warning: {e}")
 
@@ -223,7 +328,7 @@ class BrowserInstance:
         tab = self.tabs.get(tab_id)
         if not tab:
             raise KeyError(f"Tab {tab_id} not found")
-        await tab.page.goto(url, timeout=15000)
+        await tab.page.goto(url, timeout=60000, wait_until="domcontentloaded")
         return {"url": tab.page.url}
 
     async def set_viewport(self, tab_id: str, width: int, height: int):
@@ -262,12 +367,6 @@ class BrowserInstance:
             except Exception:
                 pass
             self.context = None
-        if hasattr(self, '_browser') and self._browser:
-            try:
-                await self._browser.close()
-            except Exception:
-                pass
-            self._browser = None
         if self.playwright:
             try:
                 await self.playwright.stop()
@@ -279,11 +378,21 @@ class BrowserInstance:
         print(f"[Browser {self.browser_id}] Closed")
 
     def to_dict(self) -> dict:
+        fp_info = None
+        if self.fingerprint:
+            fp_info = {
+                "id": self.fingerprint.fingerprint_id,
+                "os": self.fingerprint.os,
+                "locale": self.fingerprint.locale,
+                "timezone": self.fingerprint.timezone,
+                "ua": self.fingerprint.user_agent[:60] + "...",
+            }
         return {
             "browser_id": self.browser_id,
             "proxy": self.proxy,
             "user_data_dir": self.user_data_dir,
             "status": self.status,
+            "fingerprint": fp_info,
             "tab_count": len(self.tabs),
             "total_viewers": sum(len(t.viewers) for t in self.tabs.values()),
             "tabs": [t.to_dict() for t in self.tabs.values()],

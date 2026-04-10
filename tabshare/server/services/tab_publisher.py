@@ -16,7 +16,22 @@ class TabPublisher:
     async def start(self):
         print(f"TabPublisher[{self.tab_id[-8:]}]: starting...")
         self.page.on("framenavigated", self._on_navigated)
-        await self._ensure_stream()
+        # 初次尝试，如果失败则后台持续重试
+        if not await self._ensure_stream():
+            asyncio.ensure_future(self._retry_loop())
+
+    async def _retry_loop(self):
+        """后台持续重试 publish，直到成功或关闭"""
+        delay = 3
+        while not self._closed:
+            await asyncio.sleep(delay)
+            if self._closed:
+                return
+            print(f"TabPublisher[{self.tab_id[-8:]}]: retry publish...")
+            if await self._ensure_stream():
+                print(f"TabPublisher[{self.tab_id[-8:]}]: retry succeeded")
+                return
+            delay = min(delay + 2, 15)  # 逐步增大间隔，最大 15s
 
     def _on_navigated(self, frame):
         if frame == self.page.main_frame:
@@ -63,10 +78,10 @@ class TabPublisher:
             pass
 
         try:
-            sfu_url = "http://127.0.0.1:8088/offer"
             room = self.tab_id
-            ready = await self.page.evaluate("""async ([sfuUrl, room]) => {
-                if (window._webrtc && window._webrtc.ready) return "ready";
+
+            # Step 1: 在浏览器里获取 getDisplayMedia + createOffer (不涉及网络)
+            offer_sdp = await self.page.evaluate("""async () => {
                 window._webrtc = window._webrtc || {};
 
                 // Close old PC if exists
@@ -91,41 +106,60 @@ class TabPublisher:
                     const offer = await pc.createOffer();
                     await pc.setLocalDescription(offer);
 
-                    const res = await fetch(sfuUrl + "?room=" + room + "&role=pub", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ sdp: pc.localDescription.sdp })
-                    });
-
-                    if (!res.ok) throw new Error("SFU offer failed: " + res.status);
-                    const answer = await res.json();
-                    await pc.setRemoteDescription(new RTCSessionDescription({
-                        type: answer.type,
-                        sdp: answer.sdp
-                    }));
-
                     window._webrtc.stream = stream;
                     window._webrtc.pc = pc;
+
+                    return pc.localDescription.sdp;
+                } catch(e) {
+                    return "ERROR:" + e.toString();
+                }
+            }""")
+
+            if not offer_sdp or offer_sdp.startswith("ERROR:"):
+                print(f"TabPublisher[{self.tab_id[-8:]}]: getDisplayMedia failed: {offer_sdp}")
+                return False
+
+            # Step 2: Python 端直接请求 SFU（完全绕过浏览器代理）
+            import httpx
+            sfu_url = "http://127.0.0.1:8088/offer"
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    f"{sfu_url}?room={room}&role=pub",
+                    json={"sdp": offer_sdp},
+                    timeout=10.0,
+                )
+            if resp.status_code != 200:
+                print(f"TabPublisher[{self.tab_id[-8:]}]: SFU returned {resp.status_code}: {resp.text}")
+                return False
+
+            answer = resp.json()
+
+            # Step 3: 把 SFU answer 设回浏览器的 PeerConnection
+            result = await self.page.evaluate("""async (answer) => {
+                try {
+                    await window._webrtc.pc.setRemoteDescription(
+                        new RTCSessionDescription({ type: answer.type, sdp: answer.sdp })
+                    );
                     window._webrtc.ready = true;
 
-                    pc.oniceconnectionstatechange = () => {
-                        console.log("[pub] ICE state:", pc.iceConnectionState);
-                        if (pc.iceConnectionState === "failed" || pc.iceConnectionState === "disconnected") {
+                    window._webrtc.pc.oniceconnectionstatechange = () => {
+                        console.log("[pub] ICE state:", window._webrtc.pc.iceConnectionState);
+                        if (window._webrtc.pc.iceConnectionState === "failed" ||
+                            window._webrtc.pc.iceConnectionState === "disconnected") {
                             window._webrtc.ready = false;
                         }
                     };
-
                     return "ready";
                 } catch(e) {
-                    return e.toString();
+                    return "ERROR:" + e.toString();
                 }
-            }""", [sfu_url, room])
+            }""", answer)
 
-            if ready == "ready":
+            if result == "ready":
                 print(f"TabPublisher[{self.tab_id[-8:]}]: stream published to SFU")
                 return True
             else:
-                print(f"TabPublisher[{self.tab_id[-8:]}]: SFU publish failed: {ready}")
+                print(f"TabPublisher[{self.tab_id[-8:]}]: setRemoteDescription failed: {result}")
                 return False
         except Exception as e:
             print(f"TabPublisher[{self.tab_id[-8:]}]: publish eval failed: {e}")

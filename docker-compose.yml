@@ -7,7 +7,7 @@ services:
     ports:
       - "59055:59055/udp"
       - "59055:59055/tcp"
-      - "8085:8085"  # TabShare HTTP (exposed via shared network)
+      - "8085:8085" # TabShare HTTP (exposed via shared network)
     environment:
       - NAT_IP=${HOST_IP}
       - UDP_PORT=59055
@@ -23,6 +23,7 @@ services:
     volumes:
       - ./tabshare:/app
       - tabshare-data:/data
+      - ./tabshare/data/opt/chromium:/data/opt/chromium:ro # 暂时不用
     environment:
       - SFU_INTERNAL_URL=http://127.0.0.1:8088
 
