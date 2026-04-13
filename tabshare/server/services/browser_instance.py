@@ -17,7 +17,8 @@ from server.services.tab_publisher import TabPublisher
 # 反检测启动参数
 BASE_ARGS = [
     "--headless=new",
-    "--disable-gpu",
+    "--use-gl=angle",
+    "--use-angle=swiftshader-webgl",  # 软件渲染 WebGL，无需 GPU
     "--disable-blink-features=AutomationControlled",
     "--disable-features=WebRtcHideLocalIpsWithMdns",
     "--no-sandbox",
@@ -154,7 +155,7 @@ class BrowserInstance:
                 "headless": False,  # 由 args 中的 --headless=new 控制
                 "args": launch_args,
                 "ignore_default_args": ["--headless", "--headless=old", "--enable-automation"],
-                "user_agent": self.fingerprint.user_agent,
+                "user_agent": self.fingerprint.user_agent,  # 必须覆盖：Chrome for Testing 的真实 UA 包含 HeadlessChrome
                 "locale": self.fingerprint.locale,
                 "timezone_id": self.fingerprint.timezone,
                 "geolocation": {

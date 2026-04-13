@@ -6,6 +6,57 @@
 (() => {
   'use strict';
 
+  // ========== 0. CDP 痕迹隐藏（必须最先执行）==========
+  // Playwright/CDP 通过 UtilityScript.evaluate 执行 JS，
+  // CF Turnstile 会检查 Error().stack 中是否包含这些关键字
+
+  // 0a. 清洗 Error.stack 中的 CDP 痕迹
+  const _origStackDesc = Object.getOwnPropertyDescriptor(Error.prototype, 'stack');
+  if (_origStackDesc && _origStackDesc.get) {
+    Object.defineProperty(Error.prototype, 'stack', {
+      get: function () {
+        const stack = _origStackDesc.get.call(this);
+        if (typeof stack !== 'string') return stack;
+        return stack
+          .split('\n')
+          .filter(line =>
+            !line.includes('UtilityScript') &&
+            !line.includes('__playwright') &&
+            !line.includes('__patchright') &&
+            !line.includes('pptr:') &&
+            !line.includes('CDP')
+          )
+          .join('\n');
+      },
+      set: function (v) {
+        if (_origStackDesc.set) _origStackDesc.set.call(this, v);
+      },
+      configurable: true,
+    });
+  } else {
+    // Fallback: V8 可能用 value 而非 getter
+    const _origErrorCtor = Error;
+    const _origPrepare = Error.prepareStackTrace;
+    Error.prepareStackTrace = function (error, stack) {
+      const formatted = _origPrepare
+        ? _origPrepare(error, stack)
+        : stack.map(f => `    at ${f}`).join('\n');
+      if (typeof formatted !== 'string') return formatted;
+      return formatted
+        .split('\n')
+        .filter(line =>
+          !line.includes('UtilityScript') &&
+          !line.includes('__playwright') &&
+          !line.includes('__patchright')
+        )
+        .join('\n');
+    };
+  }
+
+  // 0b. 隐藏 sourceURL 注入标记
+  // Playwright 在 evaluate 时添加 //# sourceURL=__playwright_evaluation_script__
+  // 通过 Proxy 拦截 eval，但这个通常不暴露给页面JS
+
   const FP = {{FINGERPRINT_JSON}};
 
   // ========== Helper: seeded PRNG (mulberry32) ==========
@@ -19,19 +70,42 @@
     };
   }
 
-  // ========== 1. navigator.webdriver ==========
-  // 删除自动化标志
-  Object.defineProperty(navigator, 'webdriver', {
-    get: () => undefined,
-    configurable: true,
-  });
-  // 同时处理原型链
-  if (Object.getOwnPropertyDescriptor(Navigator.prototype, 'webdriver')) {
-    Object.defineProperty(Navigator.prototype, 'webdriver', {
-      get: () => undefined,
-      configurable: true,
-    });
+  // ========== Helper: 伪装函数为 [native code] ==========
+  const _nativeFns = new Set();
+  const _origToString = Function.prototype.toString;
+  Function.prototype.toString = function () {
+    if (_nativeFns.has(this)) {
+      return `function ${this.name || ''}() { [native code] }`;
+    }
+    return _origToString.call(this);
+  };
+  // 把 toString 本身也标记为 native
+  _nativeFns.add(Function.prototype.toString);
+
+  /** 注册一个函数使其 toString() 返回 [native code] */
+  function markNative(fn) {
+    _nativeFns.add(fn);
+    return fn;
   }
+
+  // ========== 1. navigator.webdriver ==========
+  // 必须删除属性而不是设为 undefined，否则 'webdriver' in navigator 仍返回 true
+  // 先从原型链删除
+  try {
+    const proto = Navigator.prototype;
+    if (Object.getOwnPropertyDescriptor(proto, 'webdriver')) {
+      delete proto.webdriver;
+    }
+  } catch (e) {}
+  // 再处理实例属性
+  try {
+    if ('webdriver' in navigator) {
+      Object.defineProperty(navigator, 'webdriver', {
+        get: () => false,
+        configurable: true,
+      });
+    }
+  } catch (e) {}
 
   // ========== 2. 硬件信息 ==========
   Object.defineProperty(navigator, 'hardwareConcurrency', {
@@ -123,11 +197,26 @@
 
   CanvasRenderingContext2D.prototype.getImageData = function () {
     const result = _origGetImageData.apply(this, arguments);
+    const data = result.data;
+
+    // 修复 SwiftShader 透明像素 bug: alpha=0 时 RGB 应为 0
+    // SwiftShader 错误地返回 {255,0,0,0} 而非 {0,0,0,0}
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i + 3] === 0) {  // alpha = 0 = 完全透明
+        data[i] = 0;     // R
+        data[i + 1] = 0; // G
+        data[i + 2] = 0; // B
+      }
+    }
+
+    // Canvas 噪音（在透明像素修复之后）
     const rng = mulberry32(FP.canvas_noise_seed + 1);
-    const count = Math.min(10, Math.floor(result.data.length / 4));
+    const count = Math.min(10, Math.floor(data.length / 4));
     for (let i = 0; i < count; i++) {
-      const idx = Math.floor(rng() * result.data.length) & ~3;
-      result.data[idx] = (result.data[idx] + Math.floor(rng() * 3) - 1) & 0xff;
+      const idx = Math.floor(rng() * data.length) & ~3;
+      if (data[idx + 3] > 0) {  // 只对非透明像素加噪
+        data[idx] = (data[idx] + Math.floor(rng() * 3) - 1) & 0xff;
+      }
     }
     return result;
   };
@@ -211,7 +300,7 @@
     navigator.getBattery = () => Promise.resolve(fakeBattery);
   }
 
-  // ========== 9. chrome.runtime (防止 headless 检测) ==========
+  // ========== 9. chrome 对象完整伪装 ==========
   if (!window.chrome) window.chrome = {};
   if (!window.chrome.runtime) {
     window.chrome.runtime = {
@@ -220,7 +309,6 @@
       id: undefined,
     };
   }
-  // chrome.app
   if (!window.chrome.app) {
     window.chrome.app = {
       isInstalled: false,
@@ -228,21 +316,78 @@
       RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' },
     };
   }
+  // chrome.csi — bot.sannysoft 检测项
+  if (!window.chrome.csi) {
+    window.chrome.csi = function () {
+      return {
+        onloadT: Date.now(),
+        startE: Date.now(),
+        pageT: performance.now(),
+        tran: 15,  // Navigation type: link click
+      };
+    };
+  }
+  // chrome.loadTimes — bot.sannysoft 检测项
+  if (!window.chrome.loadTimes) {
+    window.chrome.loadTimes = function () {
+      return {
+        commitLoadTime: Date.now() / 1000,
+        connectionInfo: 'h2',
+        finishDocumentLoadTime: Date.now() / 1000,
+        finishLoadTime: Date.now() / 1000,
+        firstPaintAfterLoadTime: 0,
+        firstPaintTime: Date.now() / 1000,
+        navigationType: 'Other',
+        npnNegotiatedProtocol: 'h2',
+        requestTime: Date.now() / 1000 - 0.16,
+        startLoadTime: Date.now() / 1000 - 0.12,
+        wasAlternateProtocolAvailable: false,
+        wasFetchedViaSpdy: true,
+        wasNpnNegotiated: true,
+      };
+    };
+  }
 
   // ========== 10. Plugins & MimeTypes ==========
-  Object.defineProperty(navigator, 'plugins', {
-    get: () => {
-      const plugins = [
-        { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format', length: 1 },
-        { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '', length: 1 },
-        { name: 'Native Client', filename: 'internal-nacl-plugin', description: '', length: 1 },
-      ];
-      plugins.length = 3;
-      Object.setPrototypeOf(plugins, PluginArray.prototype);
-      return plugins;
-    },
-    configurable: true,
-  });
+  // 不替换原生 PluginArray（会导致 instanceof 检查失败），
+  // 只在 plugins 为空时才注入，且保持原生类型
+  (() => {
+    const origPlugins = navigator.plugins;
+    // 如果已经有 plugins 且是 PluginArray，不替换
+    if (origPlugins && origPlugins instanceof PluginArray && origPlugins.length > 0) return;
+    // headless 下 plugins 可能为空但仍是 PluginArray 类型，不需要替换类型
+    // 只需确保检测脚本看到 length > 0 即可
+    // 通过 Proxy 包装原生 PluginArray 来注入 length
+    try {
+      Object.defineProperty(navigator, 'plugins', {
+        get: () => {
+          const proxy = new Proxy(origPlugins, {
+            get(target, prop) {
+              if (prop === 'length') return 3;
+              if (prop === Symbol.toStringTag) return 'PluginArray';
+              // item() 和索引访问伪造 Plugin 对象
+              if (typeof prop === 'string' && /^\d+$/.test(prop)) {
+                const fakePlugins = [
+                  { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+                  { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
+                  { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' },
+                ];
+                return fakePlugins[Number(prop)];
+              }
+              if (prop === 'item') return (i) => proxy[i];
+              if (prop === 'namedItem') return (name) => [proxy[0], proxy[1], proxy[2]].find(p => p?.name === name) || null;
+              if (prop === 'refresh') return () => {};
+              return Reflect.get(target, prop);
+            },
+          });
+          // 保持 instanceof PluginArray 为 true
+          Object.setPrototypeOf(proxy, PluginArray.prototype);
+          return proxy;
+        },
+        configurable: true,
+      });
+    } catch (e) {}
+  })();
 
   // ========== 11. MediaDevices 噪音 ==========
   if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
@@ -292,12 +437,25 @@
 
   // ========== 14. Permissions API 一致性 ==========
   const origQuery = Permissions.prototype.query;
-  Permissions.prototype.query = function (desc) {
+  Permissions.prototype.query = function query(desc) {
     if (desc.name === 'notifications') {
       return Promise.resolve({ state: 'prompt', onchange: null });
     }
     return origQuery.call(this, desc);
   };
+  markNative(Permissions.prototype.query);
+
+  // ========== 14b. Notification.permission (headchr_permissions) ==========
+  // headless 下 Notification.permission 返回 "denied"，正常浏览器返回 "default"
+  try {
+    Object.defineProperty(Notification, 'permission', {
+      get: () => 'default',
+      configurable: true,
+    });
+  } catch (e) {}
+
+
+
 
   // ========== 15. WebGPU 基本隔离 ==========
   // 如果 WebGPU 可用，覆盖 adapter info 使其与 WebGL 一致

@@ -9,7 +9,9 @@ RUN uv pip install --system fastapi uvicorn playwright pydantic httpx websockets
 
 EXPOSE 8085
 
-# Chrome 二进制通过挂载 data/opt/chromium 提供，无需在镜像内安装
+
+# Chrome for Testing（bot.sannysoft 全绿，Google 无验证码）
+# patchright 内置 Chromium 反而更差，不使用
 ENV CHROME_PATH=/data/opt/chromium/chrome
 
 CMD ["python", "-u", "-m", "server.app"]

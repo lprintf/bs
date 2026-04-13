@@ -6,6 +6,8 @@ Fingerprint — 生成/加载/应用浏览器指纹配置
 import json
 import hashlib
 import random
+import subprocess
+import os
 from pathlib import Path
 from dataclasses import dataclass, field, asdict
 from typing import Optional
@@ -17,7 +19,7 @@ class Fingerprint:
     # 全局唯一 ID
     fingerprint_id: str = ""
     # 伪装的操作系统
-    os: str = "macOS"
+    os: str = "linux"
     user_agent: str = ""
     # 硬件
     hardware_concurrency: int = 4
@@ -25,10 +27,10 @@ class Fingerprint:
     screen_width: int = 1920
     screen_height: int = 1080
     color_depth: int = 24
-    pixel_ratio: float = 2.0
+    pixel_ratio: float = 1.0
     # WebGL
-    webgl_vendor: str = "Apple Inc."
-    webgl_renderer: str = "Apple GPU"
+    webgl_vendor: str = "Google Inc. (NVIDIA)"
+    webgl_renderer: str = "ANGLE (NVIDIA, NVIDIA GeForce GTX 1080, OpenGL 4.5)"
     # 噪音种子（确保同一浏览器每次噪音一致，不同浏览器噪音不同）
     canvas_noise_seed: int = 0
     webgl_noise_seed: int = 0
@@ -44,27 +46,41 @@ class Fingerprint:
     longitude: float = 103.8198
 
 
-# --- macOS Chrome UA 模板 ---
+# --- Linux Chrome UA 模板 ---
 _UA_TEMPLATES = [
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/{version} Safari/537.36",
 ]
 
 _CHROME_VERSIONS = [
-    "131.0.6778.205",
-    "132.0.6834.110",
-    "133.0.6917.92",
-    "134.0.6998.45",
-    "142.0.7444.176",
+    "147.0.7727.50",
 ]
 
-# --- macOS 常见 WebGL 配置 ---
+
+def _detect_chrome_version() -> str:
+    """从 CHROME_PATH 二进制获取真实版本号，确保 UA 与 TLS 指纹一致"""
+    chrome_path = os.environ.get("CHROME_PATH", "")
+    if chrome_path and Path(chrome_path).exists():
+        try:
+            out = subprocess.check_output(
+                [chrome_path, "--version"], timeout=5, text=True
+            ).strip()
+            # "Google Chrome for Testing 147.0.7727.50" -> "147.0.7727.50"
+            parts = out.split()
+            for p in reversed(parts):
+                if p[0].isdigit() and "." in p:
+                    return p
+        except Exception:
+            pass
+    return _CHROME_VERSIONS[0]
+
+# --- Linux 常见 WebGL 配置（ANGLE 格式，与 Chrome 实际输出一致） ---
 _WEBGL_CONFIGS = [
-    ("Apple Inc.", "Apple GPU"),
-    ("Apple Inc.", "Apple M1"),
-    ("Apple Inc.", "Apple M2"),
-    ("Apple Inc.", "Apple M3"),
-    ("Apple Inc.", "AMD Radeon Pro 5500M"),
+    ("Google Inc. (NVIDIA)", "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060, OpenGL 4.5)"),
+    ("Google Inc. (NVIDIA)", "ANGLE (NVIDIA, NVIDIA GeForce GTX 1080, OpenGL 4.5)"),
+    ("Google Inc. (NVIDIA)", "ANGLE (NVIDIA, NVIDIA GeForce RTX 4070, OpenGL 4.5)"),
+    ("Google Inc. (Intel)", "ANGLE (Intel, Intel UHD Graphics 630, OpenGL 4.5)"),
+    ("Google Inc. (AMD)", "ANGLE (AMD, AMD Radeon RX 580, OpenGL 4.5)"),
 ]
 
 
@@ -78,16 +94,16 @@ def generate_fingerprint(browser_id: str) -> Fingerprint:
         f"fp_{browser_id}_{seed}".encode()
     ).hexdigest()[:20]
 
-    # UA
-    chrome_ver = rng.choice(_CHROME_VERSIONS)
+    # UA — 版本号必须匹配真实 Chrome 二进制，否则 TLS/UA 不一致
+    chrome_ver = _detect_chrome_version()
     fp.user_agent = rng.choice(_UA_TEMPLATES).format(version=chrome_ver)
 
     # Hardware
-    fp.hardware_concurrency = rng.choice([4, 8, 10, 12])
-    fp.device_memory = rng.choice([8, 16])
-    fp.screen_width = rng.choice([1440, 1680, 1920, 2560])
-    fp.screen_height = rng.choice([900, 1050, 1080, 1440])
-    fp.pixel_ratio = rng.choice([1.0, 2.0])
+    fp.hardware_concurrency = rng.choice([4, 8, 12, 16])
+    fp.device_memory = rng.choice([8, 16, 32])
+    fp.screen_width = rng.choice([1920, 2560, 3440])
+    fp.screen_height = rng.choice([1080, 1440])
+    fp.pixel_ratio = 1.0  # Linux 桌面一般是 1.0
 
     # WebGL
     fp.webgl_vendor, fp.webgl_renderer = rng.choice(_WEBGL_CONFIGS)
