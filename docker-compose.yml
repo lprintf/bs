@@ -2,7 +2,9 @@ version: '3.8'
 
 services:
   sfu:
-    build: ./sfu
+    build:
+      context: ./sfu
+      pull: false
     restart: unless-stopped
     ports:
       - "59055:59055/udp"
@@ -14,7 +16,9 @@ services:
       - HTTP_PORT=8088
 
   tabshare:
-    build: ./tabshare
+    build:
+      context: ./tabshare
+      pull: false
     restart: unless-stopped
     network_mode: "service:sfu"
     depends_on:
@@ -22,7 +26,7 @@ services:
     shm_size: '2gb'
     volumes:
       - ./tabshare:/app
-      - tabshare-data:/data
+      - ./tabshare/data:/data
       - ./tabshare/data/opt/chromium:/data/opt/chromium:ro # 暂时不用
     environment:
       - SFU_INTERNAL_URL=http://127.0.0.1:8088

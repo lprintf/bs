@@ -89,44 +89,41 @@
   }
 
   // ========== 1. navigator.webdriver ==========
-  // 必须删除属性而不是设为 undefined，否则 'webdriver' in navigator 仍返回 true
-  // 先从原型链删除
+  // 正常 Chrome: navigator.webdriver === false（不是 undefined）
+  // 直接在原型上重定义，不删除
   try {
-    const proto = Navigator.prototype;
-    if (Object.getOwnPropertyDescriptor(proto, 'webdriver')) {
-      delete proto.webdriver;
-    }
-  } catch (e) {}
-  // 再处理实例属性
-  try {
-    if ('webdriver' in navigator) {
-      Object.defineProperty(navigator, 'webdriver', {
-        get: () => false,
-        configurable: true,
-      });
-    }
+    Object.defineProperty(Navigator.prototype, 'webdriver', {
+      get: () => false,
+      configurable: true,
+      enumerable: true,
+    });
   } catch (e) {}
 
   // ========== 2. 硬件信息 ==========
-  Object.defineProperty(navigator, 'hardwareConcurrency', {
+  // 定义在 Navigator.prototype 上，使 getOwnPropertyNames(navigator) 返回空数组
+  Object.defineProperty(Navigator.prototype, 'hardwareConcurrency', {
     get: () => FP.hardware_concurrency,
     configurable: true,
+    enumerable: true,
   });
-  Object.defineProperty(navigator, 'deviceMemory', {
+  Object.defineProperty(Navigator.prototype, 'deviceMemory', {
     get: () => FP.device_memory,
     configurable: true,
+    enumerable: true,
   });
 
   // ========== 3. 语言 ==========
   const primaryLang = FP.locale;
   const baseLang = FP.locale.split('-')[0];
-  Object.defineProperty(navigator, 'language', {
+  Object.defineProperty(Navigator.prototype, 'language', {
     get: () => primaryLang,
     configurable: true,
+    enumerable: true,
   });
-  Object.defineProperty(navigator, 'languages', {
+  Object.defineProperty(Navigator.prototype, 'languages', {
     get: () => Object.freeze([primaryLang, baseLang]),
     configurable: true,
+    enumerable: true,
   });
 
   // ========== 4. Screen / Display ==========
@@ -297,7 +294,12 @@
       removeEventListener: () => {},
       dispatchEvent: () => true,
     };
-    navigator.getBattery = () => Promise.resolve(fakeBattery);
+    Object.defineProperty(Navigator.prototype, 'getBattery', {
+      value: () => Promise.resolve(fakeBattery),
+      configurable: true,
+      writable: true,
+      enumerable: true,
+    });
   }
 
   // ========== 9. chrome 对象完整伪装 ==========
@@ -359,7 +361,7 @@
     // 只需确保检测脚本看到 length > 0 即可
     // 通过 Proxy 包装原生 PluginArray 来注入 length
     try {
-      Object.defineProperty(navigator, 'plugins', {
+      Object.defineProperty(Navigator.prototype, 'plugins', {
         get: () => {
           const proxy = new Proxy(origPlugins, {
             get(target, prop) {
@@ -408,9 +410,9 @@
 
   // ========== 12. DoNotTrack ==========
   if (FP.do_not_track === '1') {
-    Object.defineProperty(navigator, 'doNotTrack', { get: () => '1', configurable: true });
+    Object.defineProperty(Navigator.prototype, 'doNotTrack', { get: () => '1', configurable: true, enumerable: true });
   } else if (FP.do_not_track === '0') {
-    Object.defineProperty(navigator, 'doNotTrack', { get: () => '0', configurable: true });
+    Object.defineProperty(Navigator.prototype, 'doNotTrack', { get: () => '0', configurable: true, enumerable: true });
   }
   // "unset" = 保持默认
 
