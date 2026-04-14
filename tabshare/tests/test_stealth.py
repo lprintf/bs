@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 async def main():
-    from playwright.async_api import async_playwright
+    from rebrowser_playwright.async_api import async_playwright
 
     STEALTH_JS = Path("/app/server/services/stealth.js").read_text()
     fp = {
@@ -28,7 +28,7 @@ async def main():
         "audio_noise_seed": 11111,
         "webgl_vendor": "Apple Inc.",
         "webgl_renderer": "Apple M3",
-        "locale": "en-SG",
+        "locale": "en-US",
         "timezone": "Asia/Singapore",
         "latitude": 1.3521,
         "longitude": 103.8198,

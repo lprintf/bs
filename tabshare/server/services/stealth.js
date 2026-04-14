@@ -99,6 +99,58 @@
     });
   } catch (e) {}
 
+  // ========== 1b. userAgentData.brands ==========
+  // Chrome for Testing 的 brands 不含 "Google Chrome"，需要补上
+  // 从 UA 中提取版本号
+  const chromeMatch = FP.user_agent.match(/Chrome\/(\d+)/);
+  const chromeMajor = chromeMatch ? chromeMatch[1] : '147';
+  const fullVersionMatch = FP.user_agent.match(/Chrome\/([\d.]+)/);
+  const chromeFullVersion = fullVersionMatch ? fullVersionMatch[1] : chromeMajor + '.0.0.0';
+
+  const spoofedBrands = [
+    { brand: 'Google Chrome', version: chromeMajor },
+    { brand: 'Chromium', version: chromeMajor },
+    { brand: 'Not.A/Brand', version: '8' },
+  ];
+  const spoofedBrandsFull = [
+    { brand: 'Google Chrome', version: chromeFullVersion },
+    { brand: 'Chromium', version: chromeFullVersion },
+    { brand: 'Not.A/Brand', version: '8.0.0.0' },
+  ];
+
+  if (navigator.userAgentData) {
+    const origUAData = navigator.userAgentData;
+    const platform = FP.os === 'mac' ? 'macOS' : FP.os === 'win' ? 'Windows' : 'Linux';
+
+    Object.defineProperty(Navigator.prototype, 'userAgentData', {
+      get: markNative(function () {
+        return Object.create(origUAData.__proto__ || Object.getPrototypeOf(origUAData), {
+          brands: { get: () => Object.freeze(spoofedBrands), enumerable: true },
+          mobile: { get: () => false, enumerable: true },
+          platform: { get: () => platform, enumerable: true },
+          getHighEntropyValues: {
+            value: markNative(function (hints) {
+              return Promise.resolve({
+                brands: spoofedBrands,
+                fullVersionList: spoofedBrandsFull,
+                mobile: false,
+                platform: platform,
+                platformVersion: FP.os === 'win' ? '15.0.0' : FP.os === 'mac' ? '14.5.0' : '6.5.0',
+                architecture: 'x86',
+                bitness: '64',
+                model: '',
+                uaFullVersion: chromeFullVersion,
+              });
+            }),
+            enumerable: true,
+          },
+        });
+      }),
+      configurable: true,
+      enumerable: true,
+    });
+  }
+
   // ========== 2. 硬件信息 ==========
   // 定义在 Navigator.prototype 上，使 getOwnPropertyNames(navigator) 返回空数组
   Object.defineProperty(Navigator.prototype, 'hardwareConcurrency', {
@@ -157,38 +209,74 @@
   });
 
   // ========== 5. Canvas 指纹噪音 ==========
+  // 策略：不修改原始 canvas，在输出阶段注入确定性噪声
+  // 同一 canvas 内容 + seed → 同一结果（避免 UNSTABLE 检测）
   const _origToDataURL = HTMLCanvasElement.prototype.toDataURL;
   const _origToBlob = HTMLCanvasElement.prototype.toBlob;
   const _origGetImageData = CanvasRenderingContext2D.prototype.getImageData;
 
-  function addCanvasNoise(canvas) {
-    try {
-      const ctx = canvas.getContext('2d');
-      if (!ctx || canvas.width === 0 || canvas.height === 0) return;
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const rng = mulberry32(FP.canvas_noise_seed);
-      const pixels = imageData.data;
-      // 修改少量像素以产生稳定的噪音
-      const count = Math.min(20, Math.floor(pixels.length / 4));
-      for (let i = 0; i < count; i++) {
-        const idx = Math.floor(rng() * pixels.length) & ~3; // 4字节对齐
-        pixels[idx] = (pixels[idx] + Math.floor(rng() * 3) - 1) & 0xff;
-        pixels[idx + 1] =
-          (pixels[idx + 1] + Math.floor(rng() * 3) - 1) & 0xff;
-      }
-      ctx.putImageData(imageData, 0, 0);
-    } catch (e) {
-      // 跨域 canvas 等情况，静默忽略
+  // 基于 canvas 像素内容生成确定性 hash（轻量）
+  function canvasContentHash(data) {
+    let h = FP.canvas_noise_seed;
+    // 采样少量像素作为 hash 输入（性能考虑）
+    const step = Math.max(1, Math.floor(data.length / 64));
+    for (let i = 0; i < data.length; i += step) {
+      h = (h * 31 + data[i]) | 0;
     }
+    return h;
+  }
+
+  // 对像素数据注入确定性噪声（不修改原始数据，返回新副本）
+  function applyCanvasNoise(srcData) {
+    const data = new Uint8ClampedArray(srcData);
+    const rng = mulberry32(canvasContentHash(data));
+    // 只修改极少量像素的低位（最大 ±1），不影响视觉
+    const count = Math.min(10, Math.floor(data.length / 16));
+    for (let i = 0; i < count; i++) {
+      const idx = Math.floor(rng() * data.length) & ~3; // 4字节对齐
+      if (data[idx + 3] > 0) { // 只对非透明像素
+        data[idx] = (data[idx] + (rng() > 0.5 ? 1 : -1)) & 0xff;
+      }
+    }
+    return data;
   }
 
   HTMLCanvasElement.prototype.toDataURL = function () {
-    addCanvasNoise(this);
+    try {
+      const ctx = this.getContext('2d');
+      if (ctx && this.width > 0 && this.height > 0) {
+        const orig = _origGetImageData.call(ctx, 0, 0, this.width, this.height);
+        const noised = applyCanvasNoise(orig.data);
+        // 临时 canvas 写入噪声数据
+        const tmp = document.createElement('canvas');
+        tmp.width = this.width;
+        tmp.height = this.height;
+        const tmpCtx = tmp.getContext('2d');
+        const imgData = tmpCtx.createImageData(this.width, this.height);
+        imgData.data.set(noised);
+        tmpCtx.putImageData(imgData, 0, 0);
+        return _origToDataURL.apply(tmp, arguments);
+      }
+    } catch (e) {}
     return _origToDataURL.apply(this, arguments);
   };
 
   HTMLCanvasElement.prototype.toBlob = function () {
-    addCanvasNoise(this);
+    try {
+      const ctx = this.getContext('2d');
+      if (ctx && this.width > 0 && this.height > 0) {
+        const orig = _origGetImageData.call(ctx, 0, 0, this.width, this.height);
+        const noised = applyCanvasNoise(orig.data);
+        const tmp = document.createElement('canvas');
+        tmp.width = this.width;
+        tmp.height = this.height;
+        const tmpCtx = tmp.getContext('2d');
+        const imgData = tmpCtx.createImageData(this.width, this.height);
+        imgData.data.set(noised);
+        tmpCtx.putImageData(imgData, 0, 0);
+        return _origToBlob.apply(tmp, arguments);
+      }
+    } catch (e) {}
     return _origToBlob.apply(this, arguments);
   };
 
@@ -197,22 +285,21 @@
     const data = result.data;
 
     // 修复 SwiftShader 透明像素 bug: alpha=0 时 RGB 应为 0
-    // SwiftShader 错误地返回 {255,0,0,0} 而非 {0,0,0,0}
     for (let i = 0; i < data.length; i += 4) {
-      if (data[i + 3] === 0) {  // alpha = 0 = 完全透明
-        data[i] = 0;     // R
-        data[i + 1] = 0; // G
-        data[i + 2] = 0; // B
+      if (data[i + 3] === 0) {
+        data[i] = 0;
+        data[i + 1] = 0;
+        data[i + 2] = 0;
       }
     }
 
-    // Canvas 噪音（在透明像素修复之后）
-    const rng = mulberry32(FP.canvas_noise_seed + 1);
-    const count = Math.min(10, Math.floor(data.length / 4));
+    // 确定性噪声（基于内容 hash，多次调用结果一致）
+    const rng = mulberry32(canvasContentHash(data));
+    const count = Math.min(10, Math.floor(data.length / 16));
     for (let i = 0; i < count; i++) {
       const idx = Math.floor(rng() * data.length) & ~3;
-      if (data[idx + 3] > 0) {  // 只对非透明像素加噪
-        data[idx] = (data[idx] + Math.floor(rng() * 3) - 1) & 0xff;
+      if (data[idx + 3] > 0) {
+        data[idx] = (data[idx] + (rng() > 0.5 ? 1 : -1)) & 0xff;
       }
     }
     return result;

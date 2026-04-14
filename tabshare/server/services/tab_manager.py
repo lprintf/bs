@@ -1,7 +1,7 @@
 import asyncio
 import json
 import os
-from playwright.async_api import async_playwright, Browser, BrowserContext, Page
+from rebrowser_playwright.async_api import async_playwright, Browser, BrowserContext, Page
 from server.config import CHROME_PATH
 from server.services.tab_publisher import TabPublisher
 

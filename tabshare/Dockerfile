@@ -5,13 +5,13 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 WORKDIR /app
 
 COPY pyproject.toml /app/
-RUN uv pip install --system fastapi uvicorn playwright pydantic httpx websockets python-multipart python-geoip-geolite2
+RUN uv pip install --system fastapi uvicorn rebrowser-playwright pydantic httpx websockets python-multipart python-geoip-geolite2
 
 EXPOSE 8085
 
 
-# Chrome for Testing（bot.sannysoft 全绿，Google 无验证码）
-# patchright 内置 Chromium 反而更差，不使用
+# rebrowser-playwright 使用基础镜像自带的 Chromium
+# 如需用独立 Chrome for Testing，设置 CHROME_PATH
 ENV CHROME_PATH=/data/opt/chromium/chrome
 
 CMD ["python", "-u", "-m", "server.app"]

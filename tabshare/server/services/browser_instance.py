@@ -9,7 +9,7 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 from typing import Optional
-from playwright.async_api import async_playwright, BrowserContext, Page
+from rebrowser_playwright.async_api import async_playwright, BrowserContext, Page
 from server.config import CHROME_PATH, BROWSER_DATA_DIR
 from server.services.fingerprint import load_or_create_fingerprint, save_fingerprint, Fingerprint
 from server.services.tab_publisher import TabPublisher
@@ -166,6 +166,11 @@ class BrowserInstance:
                 "permissions": ["geolocation"],
                 "viewport": DEFAULT_VIEWPORT,
                 "accept_downloads": True,
+                # headers 覆盖：Accept-Language + Sec-Ch-Ua
+                "extra_http_headers": {
+                    "Accept-Language": f"{self.fingerprint.locale},{self.fingerprint.locale.split('-')[0]};q=0.9",
+                    "Sec-Ch-Ua": self._build_sec_ch_ua(),
+                },
             }
             if CHROME_PATH:
                 launch_kwargs["executable_path"] = CHROME_PATH
@@ -203,6 +208,13 @@ class BrowserInstance:
             self.status = "error"
             print(f"[Browser {self.browser_id}] Launch failed: {e}")
             raise
+
+    def _build_sec_ch_ua(self) -> str:
+        """构建 Sec-Ch-Ua header，与 stealth.js brands 一致"""
+        import re
+        m = re.search(r'Chrome/(\d+)', self.fingerprint.user_agent)
+        major = m.group(1) if m else '147'
+        return f'"Google Chrome";v="{major}", "Chromium";v="{major}", "Not.A/Brand";v="8"'
 
     def _build_stealth_script(self) -> str:
         """加载 stealth.js 模板并注入指纹数据"""

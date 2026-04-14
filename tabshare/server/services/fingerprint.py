@@ -28,9 +28,9 @@ class Fingerprint:
     screen_height: int = 1080
     color_depth: int = 24
     pixel_ratio: float = 1.0
-    # WebGL
-    webgl_vendor: str = "Google Inc. (NVIDIA)"
-    webgl_renderer: str = "ANGLE (NVIDIA, NVIDIA GeForce GTX 1080, OpenGL 4.5)"
+    # WebGL — 必须和 SwiftShader GL 能力匹配
+    webgl_vendor: str = "Google Inc. (Intel)"
+    webgl_renderer: str = "ANGLE (Intel, Intel UHD Graphics 630, OpenGL 4.5)"
     # 噪音种子（确保同一浏览器每次噪音一致，不同浏览器噪音不同）
     canvas_noise_seed: int = 0
     webgl_noise_seed: int = 0
@@ -40,7 +40,7 @@ class Fingerprint:
     # WebRTC
     webrtc_policy: str = "disable_non_proxied_udp"
     # locale/timezone（geoip 自动填充，也可手动指定）
-    locale: str = "en-SG"
+    locale: str = "en-US"
     timezone: str = "Asia/Singapore"
     latitude: float = 1.3521
     longitude: float = 103.8198
@@ -74,13 +74,15 @@ def _detect_chrome_version() -> str:
             pass
     return _CHROME_VERSIONS[0]
 
-# --- Linux 常见 WebGL 配置（ANGLE 格式，与 Chrome 实际输出一致） ---
+# --- WebGL 配置 ---
+# 必须和 SwiftShader 实际 GL 能力匹配（MAX_TEXTURE_SIZE=8192）
+# Intel 集成显卡和 AMD APU 的能力最接近，避免 NVIDIA 独显（16384+）
 _WEBGL_CONFIGS = [
-    ("Google Inc. (NVIDIA)", "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060, OpenGL 4.5)"),
-    ("Google Inc. (NVIDIA)", "ANGLE (NVIDIA, NVIDIA GeForce GTX 1080, OpenGL 4.5)"),
-    ("Google Inc. (NVIDIA)", "ANGLE (NVIDIA, NVIDIA GeForce RTX 4070, OpenGL 4.5)"),
     ("Google Inc. (Intel)", "ANGLE (Intel, Intel UHD Graphics 630, OpenGL 4.5)"),
-    ("Google Inc. (AMD)", "ANGLE (AMD, AMD Radeon RX 580, OpenGL 4.5)"),
+    ("Google Inc. (Intel)", "ANGLE (Intel, Intel UHD Graphics 770, OpenGL 4.5)"),
+    ("Google Inc. (Intel)", "ANGLE (Intel, Intel Iris Xe Graphics, OpenGL 4.5)"),
+    ("Google Inc. (AMD)", "ANGLE (AMD, AMD Radeon Vega 8 Graphics, OpenGL 4.5)"),
+    ("Google Inc. (AMD)", "ANGLE (AMD, AMD Radeon RX Vega 11, OpenGL 4.5)"),
 ]
 
 
@@ -99,8 +101,9 @@ def generate_fingerprint(browser_id: str) -> Fingerprint:
     fp.user_agent = rng.choice(_UA_TEMPLATES).format(version=chrome_ver)
 
     # Hardware
-    fp.hardware_concurrency = rng.choice([4, 8, 12, 16])
-    fp.device_memory = rng.choice([8, 16, 32])
+    # deviceMemory API 合法值: 0.25, 0.5, 1, 2, 4, 8（最大 8）
+    fp.hardware_concurrency = rng.choice([4, 8, 16])
+    fp.device_memory = rng.choice([4, 8])
     fp.screen_width = rng.choice([1920, 2560, 3440])
     fp.screen_height = rng.choice([1080, 1440])
     fp.pixel_ratio = 1.0  # Linux 桌面一般是 1.0

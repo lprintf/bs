@@ -17,7 +17,7 @@ class CreateBrowserRequest(BaseModel):
     browser_id: Optional[str] = None
     proxy: Optional[str] = None
     user_data_dir: Optional[str] = None
-    locale: Optional[str] = None       # e.g. "en-US", "en-SG"
+    locale: Optional[str] = None       # e.g. "en-US", "en-US"
     timezone: Optional[str] = None     # e.g. "America/Los_Angeles"
     auto_start: bool = True
 

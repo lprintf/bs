@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 # 可根据业务需要扩展
 COUNTRY_LOCALE_MAP = {
     "SG": {
-        "locale": "en-SG",
+        "locale": "en-US",
         "timezone": "Asia/Singapore",
         "lat": 1.3521,
         "lon": 103.8198,
