@@ -63,6 +63,20 @@ async def sfu_offer_proxy(request: Request):
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=502)
 
+@app.post("/api/eval/{tab_id}")
+async def eval_js(tab_id: str, request: Request):
+    """Debug: evaluate JS in a tab."""
+    body = await request.json()
+    js = body.get("js", "1+1")
+    tab = browser_manager.find_tab(tab_id)
+    if not tab:
+        return JSONResponse({"error": "Tab not found"}, status_code=404)
+    try:
+        result = await tab.page.evaluate(js)
+        return {"result": result}
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
 
 # ── File serving ──
 from server.services.browser_instance import DOWNLOADS_DIR

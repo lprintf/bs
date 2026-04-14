@@ -21,14 +21,14 @@
 
 ## 已确认的检测向量
 
-| # | 向量 | 状态 | 说明 |
-|---|---|---|---|
-| 1 | **`Runtime.enable` CDP 命令** | ❌ 未解决 | 主要向量。Playwright 自动调用，Turnstile 检测 `Runtime.consoleAPICalled` 副作用 |
-| 2 | `navigator.webdriver` | ✅ 已解决 | stealth.js 重定义为 `false`（非 `undefined`） |
-| 3 | `userAgentData.brands` | ✅ 已解决 | stealth.js 注入 `"Google Chrome"` 品牌 |
-| 4 | 屏幕分辨率不一致 | ✅ 已解决 | fingerprint.py 锁定 1920x1080，与 Xvfb 一致 |
-| 5 | Playwright 启动参数 | ✅ 已解决 | `ignore_default_args` 清除高风险参数 |
-| 6 | Profile 污染 `cf_chl_rc_ni` | ⚠️ 临时方案 | challenge 失败时删除 profile 重建 |
+| #   | 向量                          | 状态       | 说明                                                                            |
+| --- | ----------------------------- | ---------- | ------------------------------------------------------------------------------- |
+| 1   | **`Runtime.enable` CDP 命令** | ❌ 未解决   | 主要向量。Playwright 自动调用，Turnstile 检测 `Runtime.consoleAPICalled` 副作用 |
+| 2   | `navigator.webdriver`         | ✅ 已解决   | stealth.js 重定义为 `false`（非 `undefined`）                                   |
+| 3   | `userAgentData.brands`        | ✅ 已解决   | stealth.js 注入 `"Google Chrome"` 品牌                                          |
+| 4   | 屏幕分辨率不一致              | ✅ 已解决   | fingerprint.py 锁定 1920x1080，与 Xvfb 一致                                     |
+| 5   | Playwright 启动参数           | ✅ 已解决   | `ignore_default_args` 清除高风险参数                                            |
+| 6   | Profile 污染 `cf_chl_rc_ni`   | ⚠️ 临时方案 | challenge 失败时删除 profile 重建                                               |
 
 ### Runtime.enable 详情
 
@@ -51,6 +51,11 @@
 | **Cloudflare Turnstile Demo** | 官方 Turnstile 测试页                            | https://www.cloudflare.com/products/turnstile/ |
 | **CreepJS**                   | 深度指纹检测                                     | https://abrahamjuliot.github.io/creepjs/       |
 | **BrowserLeaks**              | WebGL、Canvas、Audio 指纹                        | https://browserleaks.com/                      |
+
+重要检测站点:
+
+- https://www.browserscan.net/zh
+- https://www.browserscan.net/zh/bot-detection
 
 ---
 
@@ -106,12 +111,12 @@
 
 ## 关键文件
 
-| 文件 | 职责 |
-|---|---|
-| `server/services/stealth.js` | JS 指纹伪装（webdriver、brands、screen） |
-| `server/services/fingerprint.py` | 指纹生成与管理 |
-| `server/services/browser_instance.py` | 浏览器启动参数管理 |
-| `server/api/ws.py` | WebSocket 鼠标/键盘输入 |
+| 文件                                  | 职责                                     |
+| ------------------------------------- | ---------------------------------------- |
+| `server/services/stealth.js`          | JS 指纹伪装（webdriver、brands、screen） |
+| `server/services/fingerprint.py`      | 指纹生成与管理                           |
+| `server/services/browser_instance.py` | 浏览器启动参数管理                       |
+| `server/api/ws.py`                    | WebSocket 鼠标/键盘输入                  |
 
 ---
 

@@ -25,6 +25,9 @@ async def websocket_endpoint(websocket: WebSocket, tab_id: str):
             msg = json.loads(raw)
             t = msg.get("type")
 
+            # Track which viewer sent input (for popup routing)
+            tab.last_input_ws = websocket
+
             if t == "mouse":
                 btn = msg.get("button", "none")
                 pw_btn = "left" if btn == "left" else "middle" if btn == "middle" else "right"

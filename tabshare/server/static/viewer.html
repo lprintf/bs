@@ -394,6 +394,7 @@
         urlInput.addEventListener('keyup', (e) => e.stopPropagation());
 
         let ws, pc;
+        let _popupOverlayTimer = null;
         let statusFadeTimer = null;
 
         function setStatus(text, type) {
@@ -510,6 +511,25 @@
                         document.body.appendChild(toast);
                         setTimeout(() => { if (toast.parentElement) toast.remove(); }, 8000);
                         document.getElementById('fileUpload').click();
+                    } else if (msg.type === 'popup_loading') {
+                        // Show loading overlay while popup tab is being created
+                        showNavOverlay();
+                        setStatus('Opening new tab…', 'connecting');
+                        if (_popupOverlayTimer) clearTimeout(_popupOverlayTimer);
+                        _popupOverlayTimer = setTimeout(() => {
+                            hideNavOverlay();
+                            _popupOverlayTimer = null;
+                        }, 9000);
+                    } else if (msg.type === 'popup_tab_created') {
+                        // New tab ready, switch to it
+                        console.log('Popup created new tab:', msg.tab_id);
+                        if (_popupOverlayTimer) clearTimeout(_popupOverlayTimer);
+                        _popupOverlayTimer = null;
+                        hideNavOverlay();
+                        if (msg.tab_id) {
+                            loadTabBar();
+                            switchTab(msg.tab_id);
+                        }
                     }
                 } catch(e) {}
             };

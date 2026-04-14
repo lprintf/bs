@@ -52,6 +52,7 @@ class TabInfo:
         self.viewers: list = []  # WebSocket connections
         self.downloads: list[dict] = []  # [{filename, path, size, timestamp}]
         self.pending_filechooser = None  # Playwright FileChooser object
+        self.last_input_ws = None  # 最后发送输入的 viewer ws
 
     def to_dict(self) -> dict:
         try:
@@ -274,6 +275,11 @@ class BrowserInstance:
             asyncio.ensure_future(self._handle_filechooser(tab_info, fc))
         page.on("filechooser", on_filechooser)
 
+        # Popup interception (target="_blank" links)
+        page.on("popup", lambda popup: asyncio.ensure_future(
+            self._handle_popup(tab_info, popup)
+        ))
+
         print(f"[Browser {self.browser_id}] Created tab: {tab_id} → {url}")
         return tab_info
 
@@ -313,6 +319,76 @@ class BrowserInstance:
             "type": "filechooser_opened",
             "multiple": is_multi,
         })
+
+    async def _handle_popup(self, source_tab: TabInfo, popup_page: Page):
+        """Handle target=_blank popup: register as new tab, notify triggering viewer."""
+        ws = source_tab.last_input_ws
+        try:
+            # Immediately notify viewer to show loading overlay
+            if ws:
+                try:
+                    await ws.send_text(json.dumps({"type": "popup_loading"}))
+                except Exception:
+                    pass
+
+            # Wait for popup to load
+            try:
+                await popup_page.wait_for_load_state("domcontentloaded", timeout=10000)
+            except Exception:
+                pass
+
+            self._tab_counter += 1
+            tab_id = f"{self.browser_id}_tab_{self._tab_counter}"
+            print(f"[Browser {self.browser_id}] Popup → new tab: {tab_id} ({popup_page.url[:80]})")
+
+            # Console forwarding
+            popup_page.on("console", lambda msg: (
+                None if any(s in msg.text for s in _SUPPRESSED_LOGS)
+                else print(f"[{tab_id}] [{msg.type}]: {msg.text}")
+            ))
+
+            # Start publisher
+            publisher = TabPublisher(popup_page, tab_id)
+            tab_info = TabInfo(tab_id, self.browser_id, popup_page, publisher)
+            self.tabs[tab_id] = tab_info
+            asyncio.create_task(publisher.start())
+
+            # Download interception
+            tab_dir = DOWNLOADS_DIR / tab_id
+            tab_dir.mkdir(parents=True, exist_ok=True)
+            popup_page.on("download", lambda dl: asyncio.ensure_future(
+                self._handle_download(tab_info, dl, tab_dir)
+            ))
+
+            # File chooser
+            popup_page.on("filechooser", lambda fc: asyncio.ensure_future(
+                self._handle_filechooser(tab_info, fc)
+            ))
+
+            # Recursive popup handling
+            popup_page.on("popup", lambda p: asyncio.ensure_future(
+                self._handle_popup(tab_info, p)
+            ))
+
+            # Notify viewer: tab ready, switch to it
+            if ws:
+                try:
+                    await ws.send_text(json.dumps({
+                        "type": "popup_tab_created",
+                        "tab_id": tab_id,
+                        "url": popup_page.url,
+                    }))
+                except Exception:
+                    pass
+
+        except Exception as e:
+            print(f"[Browser {self.browser_id}] Popup handling error: {e}")
+            # Hide overlay on error
+            if ws:
+                try:
+                    await ws.send_text(json.dumps({"type": "popup_tab_created", "tab_id": "", "error": str(e)}))
+                except Exception:
+                    pass
 
     async def close_tab(self, tab_id: str):
         """Close a specific tab."""
