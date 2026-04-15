@@ -189,6 +189,12 @@ class BrowserInstance:
             stealth_js = self._build_stealth_script()
             await self.context.add_init_script(stealth_js)
 
+            # 6. CDP 覆盖 userAgentMetadata (sec-ch-ua brands)
+            # Playwright 的 user_agent 参数只改 navigator.userAgent，
+            # sec-ch-ua brands 仍由 Chrome 二进制决定，需要 CDP 手动覆盖
+            for page in self.context.pages:
+                await self._apply_ua_metadata(page)
+
             # 关闭 persistent context 自带的空白页
             for page in self.context.pages:
                 if page.url in ("about:blank", "chrome://newtab/"):
@@ -206,11 +212,46 @@ class BrowserInstance:
             print(f"[Browser {self.browser_id}] Launch failed: {e}")
             raise
 
+    async def _apply_ua_metadata(self, page) -> None:
+        """通过 CDP 覆盖页面的 userAgentMetadata，使 sec-ch-ua brands 与 UA 版本一致"""
+        import re
+        m = re.search(r'Chrome/(\d+\.\d+\.\d+\.\d+)', self.fingerprint.user_agent)
+        if not m:
+            return
+        full_ver = m.group(1)
+        major_ver = full_ver.split('.')[0]
+        try:
+            cdp = await page.context.new_cdp_session(page)
+            await cdp.send("Network.setUserAgentOverride", {
+                "userAgent": self.fingerprint.user_agent,
+                "userAgentMetadata": {
+                    "brands": [
+                        {"brand": "Google Chrome", "version": major_ver},
+                        {"brand": "Not.A/Brand", "version": "8"},
+                        {"brand": "Chromium", "version": major_ver},
+                    ],
+                    "fullVersionList": [
+                        {"brand": "Google Chrome", "version": full_ver},
+                        {"brand": "Not.A/Brand", "version": "8.0.0.0"},
+                        {"brand": "Chromium", "version": full_ver},
+                    ],
+                    "platform": "Linux",
+                    "platformVersion": "6.8.0",
+                    "architecture": "x86",
+                    "bitness": "64",
+                    "model": "",
+                    "mobile": False,
+                }
+            })
+            await cdp.detach()
+        except Exception:
+            pass
+
     def _build_sec_ch_ua(self) -> str:
         """构建 Sec-Ch-Ua header，与 stealth.js brands 一致"""
         import re
         m = re.search(r'Chrome/(\d+)', self.fingerprint.user_agent)
-        major = m.group(1) if m else '147'
+        major = m.group(1) if m else '146'
         return f'"Google Chrome";v="{major}", "Chromium";v="{major}", "Not.A/Brand";v="8"'
 
     def _build_stealth_script(self) -> str:
@@ -249,6 +290,9 @@ class BrowserInstance:
         tab_id = f"{self.browser_id}_tab_{self._tab_counter}"
 
         page = await self.context.new_page()
+
+        # CDP 覆盖新页面的 sec-ch-ua brands
+        await self._apply_ua_metadata(page)
 
         if viewport:
             await page.set_viewport_size(viewport)

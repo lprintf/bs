@@ -53,22 +53,40 @@ _UA_TEMPLATES = [
 ]
 
 _CHROME_VERSIONS = [
-    "147.0.7727.50",
+    # Chrome 146 Stable (Linux) — 真实发布版本号
+    "146.0.7680.177",
+    "146.0.7680.164",
+    "146.0.7680.153",
+    "146.0.7680.80",
+    "146.0.7680.75",
+    # Chrome 145 Stable
+    "145.0.7632.159",
+    "145.0.7632.116",
+    "145.0.7632.109",
+    # Chrome 144 Stable
+    "144.0.7559.132",
+    "144.0.7559.109",
 ]
 
 
-def _detect_chrome_version() -> str:
-    """从 CHROME_PATH 二进制获取真实版本号，确保 UA 与 TLS 指纹一致"""
+def _detect_chrome_version(major_offset: int = 0) -> str:
+    """从 CHROME_PATH 二进制获取真实版本号。
+    major_offset: 大版本偏移量（-1 = 降一个大版本）
+    """
     chrome_path = os.environ.get("CHROME_PATH", "")
     if chrome_path and Path(chrome_path).exists():
         try:
             out = subprocess.check_output(
                 [chrome_path, "--version"], timeout=5, text=True
             ).strip()
-            # "Google Chrome 137.0.7151.68" -> "137.0.7151.68"
+            # "Google Chrome 147.0.7727.55" -> "147.0.7727.55"
             parts = out.split()
             for p in reversed(parts):
                 if p[0].isdigit() and "." in p:
+                    if major_offset != 0:
+                        segs = p.split(".")
+                        segs[0] = str(int(segs[0]) + major_offset)
+                        return ".".join(segs)
                     return p
         except Exception:
             pass
@@ -96,8 +114,9 @@ def generate_fingerprint(browser_id: str) -> Fingerprint:
         f"fp_{browser_id}_{seed}".encode()
     ).hexdigest()[:20]
 
-    # UA — 版本号必须匹配真实 Chrome 二进制，否则 TLS/UA 不一致
-    chrome_ver = _detect_chrome_version()
+    # UA — 使用真实 Chrome 版本号（从版本列表随机选取）
+    # headless 模式特性检测通常比实际二进制低一个大版本，所以用 146 系列
+    chrome_ver = rng.choice(_CHROME_VERSIONS)
     fp.user_agent = rng.choice(_UA_TEMPLATES).format(version=chrome_ver)
 
     # Hardware

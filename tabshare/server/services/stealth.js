@@ -99,6 +99,48 @@
     });
   } catch (e) {}
 
+  // ========== 1b. navigator.userAgentData (sec-ch-ua brands) ==========
+  // Chrome 二进制版本和 UA 版本可能不同，需要在 JS 层覆盖 brands
+  if (navigator.userAgentData && FP.user_agent) {
+    const uaMatch = FP.user_agent.match(/Chrome\/(\d+)\.(\d+\.\d+\.\d+)/);
+    if (uaMatch) {
+      const majorVer = uaMatch[1];
+      const fullVer = uaMatch[1] + '.' + uaMatch[2];
+      const fakeBrands = Object.freeze([
+        Object.freeze({ brand: 'Google Chrome', version: majorVer }),
+        Object.freeze({ brand: 'Not.A/Brand', version: '8' }),
+        Object.freeze({ brand: 'Chromium', version: majorVer }),
+      ]);
+      const fakeFullVersionList = Object.freeze([
+        Object.freeze({ brand: 'Google Chrome', version: fullVer }),
+        Object.freeze({ brand: 'Not.A/Brand', version: '8.0.0.0' }),
+        Object.freeze({ brand: 'Chromium', version: fullVer }),
+      ]);
+      const origUAData = navigator.userAgentData;
+      const fakeUAData = {
+        brands: fakeBrands,
+        mobile: origUAData.mobile,
+        platform: origUAData.platform,
+        getHighEntropyValues: markNative(function getHighEntropyValues(hints) {
+          return origUAData.getHighEntropyValues(hints).then(function(values) {
+            values.brands = fakeBrands;
+            values.fullVersionList = fakeFullVersionList;
+            return values;
+          });
+        }),
+        toJSON: markNative(function toJSON() {
+          return { brands: fakeBrands, mobile: origUAData.mobile, platform: origUAData.platform };
+        }),
+      };
+      Object.setPrototypeOf(fakeUAData, NavigatorUAData.prototype);
+      Object.defineProperty(Navigator.prototype, 'userAgentData', {
+        get: markNative(function userAgentData() { return fakeUAData; }),
+        configurable: true,
+        enumerable: true,
+      });
+    }
+  }
+
 
   // ========== 2. 硬件信息 ==========
   // 定义在 Navigator.prototype 上，使 getOwnPropertyNames(navigator) 返回空数组
