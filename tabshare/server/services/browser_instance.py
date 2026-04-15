@@ -16,7 +16,6 @@ from server.services.tab_publisher import TabPublisher
 
 # 反检测启动参数
 BASE_ARGS = [
-    "--headless=new",
     "--use-gl=angle",
     "--use-angle=swiftshader-webgl",  # 软件渲染 WebGL，无需 GPU
     "--disable-blink-features=AutomationControlled",
@@ -153,9 +152,9 @@ class BrowserInstance:
 
             launch_kwargs = {
                 "user_data_dir": str(profile_dir),
-                "headless": False,  # 由 args 中的 --headless=new 控制
+                "headless": True,  # rebrowser-playwright 自动处理 UA/sec-ch-ua 一致性
                 "args": launch_args,
-                "ignore_default_args": ["--headless", "--headless=old", "--enable-automation"],
+                "ignore_default_args": ["--enable-automation"],
                 "user_agent": self.fingerprint.user_agent,
                 "locale": self.fingerprint.locale,
                 "timezone_id": self.fingerprint.timezone,
