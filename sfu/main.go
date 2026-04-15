@@ -22,7 +22,7 @@ type Room struct {
 	mu          sync.RWMutex
 	videoTrack  *webrtc.TrackLocalStaticRTP
 	publisher   *webrtc.PeerConnection
-	subscribers []*webrtc.PeerConnection
+	subscribers map[string]*Subscriber // id -> subscriber
 	// RTP sequence/timestamp continuity across publisher reconnects
 	seqOffset uint16
 	tsOffset  uint32
@@ -31,10 +31,22 @@ type Room struct {
 	seqReset  bool
 }
 
+// Subscriber holds a subscriber's connection and track sender.
+type Subscriber struct {
+	pc     *webrtc.PeerConnection
+	sender *webrtc.RTPSender
+	room   string // current room name
+}
+
 var (
 	rooms   = map[string]*Room{}
 	roomsMu sync.RWMutex
 	api     *webrtc.API
+	// Global subscriber registry for cross-room switching
+	allSubs   = map[string]*Subscriber{}
+	allSubsMu sync.RWMutex
+	subIDCounter uint64
+	subIDMu      sync.Mutex
 )
 
 func getRoom(name string) *Room {
@@ -42,10 +54,17 @@ func getRoom(name string) *Room {
 	defer roomsMu.Unlock()
 	r, ok := rooms[name]
 	if !ok {
-		r = &Room{}
+		r = &Room{subscribers: map[string]*Subscriber{}}
 		rooms[name] = r
 	}
 	return r
+}
+
+func nextSubID() string {
+	subIDMu.Lock()
+	defer subIDMu.Unlock()
+	subIDCounter++
+	return fmt.Sprintf("sub_%d", subIDCounter)
 }
 
 func main() {
@@ -87,6 +106,7 @@ func main() {
 
 	// --- HTTP signaling ---
 	http.HandleFunc("/offer", handleOffer)
+	http.HandleFunc("/switch", handleSwitch)
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("ok"))
 	})
@@ -101,8 +121,9 @@ type offerRequest struct {
 }
 
 type answerResponse struct {
-	SDP  string `json:"sdp"`
-	Type string `json:"type"`
+	SDP   string `json:"sdp"`
+	Type  string `json:"type"`
+	SubID string `json:"sub_id,omitempty"`
 }
 
 func handleOffer(w http.ResponseWriter, r *http.Request) {
@@ -133,11 +154,12 @@ func handleOffer(w http.ResponseWriter, r *http.Request) {
 
 	var answer *webrtc.SessionDescription
 	var err error
+	var subID string
 
 	if role == "pub" {
 		answer, err = handlePublisher(room, offer)
 	} else {
-		answer, err = handleSubscriber(room, offer)
+		answer, subID, err = handleSubscriber(room, roomName, offer)
 	}
 
 	if err != nil {
@@ -148,8 +170,9 @@ func handleOffer(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(answerResponse{
-		SDP:  answer.SDP,
-		Type: answer.Type.String(),
+		SDP:   answer.SDP,
+		Type:  answer.Type.String(),
+		SubID: subID,
 	})
 }
 
@@ -267,27 +290,29 @@ func handlePublisher(room *Room, offer webrtc.SessionDescription) (*webrtc.Sessi
 	return localDesc, nil
 }
 
-func handleSubscriber(room *Room, offer webrtc.SessionDescription) (*webrtc.SessionDescription, error) {
+func handleSubscriber(room *Room, roomName string, offer webrtc.SessionDescription) (*webrtc.SessionDescription, string, error) {
 	room.mu.RLock()
 	track := room.videoTrack
-	pubPC := room.publisher
 	room.mu.RUnlock()
 
 	if track == nil {
-		return nil, fmt.Errorf("no publisher in room yet")
+		return nil, "", fmt.Errorf("no publisher in room yet")
 	}
 
 	pc, err := api.NewPeerConnection(webrtc.Configuration{})
 	if err != nil {
-		return nil, fmt.Errorf("new pc: %w", err)
+		return nil, "", fmt.Errorf("new pc: %w", err)
 	}
 
 	rtpSender, err := pc.AddTrack(track)
 	if err != nil {
-		return nil, fmt.Errorf("add track: %w", err)
+		return nil, "", fmt.Errorf("add track: %w", err)
 	}
 
-	// Read RTCP (PLI, NACK etc.) from viewer and forward PLI to publisher
+	subID := nextSubID()
+	sub := &Subscriber{pc: pc, sender: rtpSender, room: roomName}
+
+	// Read RTCP (PLI, NACK etc.) from viewer
 	go func() {
 		buf := make([]byte, 1500)
 		for {
@@ -298,55 +323,139 @@ func handleSubscriber(room *Room, offer webrtc.SessionDescription) (*webrtc.Sess
 	}()
 
 	pc.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
-		log.Printf("[sub] ICE state: %s", state.String())
+		log.Printf("[sub:%s] ICE state: %s", subID, state.String())
 		if state == webrtc.ICEConnectionStateConnected {
-			// Send PLI to publisher to get a keyframe for this new viewer
-			if pubPC != nil {
-				for _, receiver := range pubPC.GetReceivers() {
-					if receiver.Track() != nil {
-						pubPC.WriteRTCP([]rtcp.Packet{
-							&rtcp.PictureLossIndication{
-								MediaSSRC: uint32(receiver.Track().SSRC()),
-							},
-						})
-						log.Printf("[sub] sent PLI to publisher for keyframe")
-					}
-				}
-			}
+			sendPLI(room)
 		}
 		if state == webrtc.ICEConnectionStateFailed || state == webrtc.ICEConnectionStateDisconnected {
 			pc.Close()
-			room.mu.Lock()
-			for i, s := range room.subscribers {
-				if s == pc {
-					room.subscribers = append(room.subscribers[:i], room.subscribers[i+1:]...)
-					break
-				}
-			}
-			room.mu.Unlock()
+			// Cleanup from current room
+			cleanupSub(subID)
 		}
 	})
 
 	if err = pc.SetRemoteDescription(offer); err != nil {
-		return nil, fmt.Errorf("set remote: %w", err)
+		return nil, "", fmt.Errorf("set remote: %w", err)
 	}
 
 	answer, err := pc.CreateAnswer(nil)
 	if err != nil {
-		return nil, fmt.Errorf("create answer: %w", err)
+		return nil, "", fmt.Errorf("create answer: %w", err)
 	}
 
 	gatherComplete := webrtc.GatheringCompletePromise(pc)
 	if err = pc.SetLocalDescription(answer); err != nil {
-		return nil, fmt.Errorf("set local: %w", err)
+		return nil, "", fmt.Errorf("set local: %w", err)
 	}
 	<-gatherComplete
 
+	// Register subscriber
 	room.mu.Lock()
-	room.subscribers = append(room.subscribers, pc)
+	room.subscribers[subID] = sub
 	room.mu.Unlock()
 
+	allSubsMu.Lock()
+	allSubs[subID] = sub
+	allSubsMu.Unlock()
+
 	localDesc := pc.LocalDescription()
-	log.Printf("[sub] answer ready, ICE candidates gathered")
-	return localDesc, nil
+	log.Printf("[sub:%s] answer ready, room=%s", subID, roomName)
+	return localDesc, subID, nil
+}
+
+// sendPLI sends a Picture Loss Indication to the publisher of a room.
+func sendPLI(room *Room) {
+	room.mu.RLock()
+	pubPC := room.publisher
+	room.mu.RUnlock()
+	if pubPC == nil {
+		return
+	}
+	for _, receiver := range pubPC.GetReceivers() {
+		if receiver.Track() != nil {
+			pubPC.WriteRTCP([]rtcp.Packet{
+				&rtcp.PictureLossIndication{
+					MediaSSRC: uint32(receiver.Track().SSRC()),
+				},
+			})
+		}
+	}
+}
+
+// cleanupSub removes a subscriber from its room and global registry.
+func cleanupSub(subID string) {
+	allSubsMu.Lock()
+	sub, ok := allSubs[subID]
+	if ok {
+		delete(allSubs, subID)
+	}
+	allSubsMu.Unlock()
+
+	if !ok {
+		return
+	}
+
+	room := getRoom(sub.room)
+	room.mu.Lock()
+	delete(room.subscribers, subID)
+	room.mu.Unlock()
+}
+
+// handleSwitch moves a subscriber from one room's track to another without re-negotiation.
+func handleSwitch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+
+	subID := r.URL.Query().Get("sub_id")
+	newRoom := r.URL.Query().Get("room")
+	if subID == "" || newRoom == "" {
+		http.Error(w, "need ?sub_id=xxx&room=yyy", http.StatusBadRequest)
+		return
+	}
+
+	allSubsMu.RLock()
+	sub, ok := allSubs[subID]
+	allSubsMu.RUnlock()
+	if !ok {
+		http.Error(w, "subscriber not found", http.StatusNotFound)
+		return
+	}
+
+	targetRoom := getRoom(newRoom)
+	targetRoom.mu.RLock()
+	newTrack := targetRoom.videoTrack
+	targetRoom.mu.RUnlock()
+
+	if newTrack == nil {
+		http.Error(w, "no publisher in target room", http.StatusNotFound)
+		return
+	}
+
+	// Remove from old room
+	oldRoom := getRoom(sub.room)
+	oldRoom.mu.Lock()
+	delete(oldRoom.subscribers, subID)
+	oldRoom.mu.Unlock()
+
+	// Replace track (no re-negotiation needed!)
+	if err := sub.sender.ReplaceTrack(newTrack); err != nil {
+		http.Error(w, fmt.Sprintf("replace track: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Update subscriber's room
+	sub.room = newRoom
+	targetRoom.mu.Lock()
+	targetRoom.subscribers[subID] = sub
+	targetRoom.mu.Unlock()
+
+	// Send PLI to new room's publisher for immediate keyframe
+	sendPLI(targetRoom)
+
+	log.Printf("[switch] %s → room %s", subID, newRoom)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "room": newRoom})
 }

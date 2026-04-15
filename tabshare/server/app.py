@@ -63,6 +63,20 @@ async def sfu_offer_proxy(request: Request):
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=502)
 
+@app.api_route("/api/sfu/switch", methods=["POST"])
+async def sfu_switch_proxy(request: Request):
+    """Proxy track switch to Go SFU (fast tab switching without re-negotiation)."""
+    query = str(request.url.query)
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{SFU_URL}/switch?{query}",
+                timeout=5.0,
+            )
+        return JSONResponse(content=resp.json(), status_code=resp.status_code)
+    except Exception as e:
+        return JSONResponse(content={"error": str(e)}, status_code=502)
+
 @app.post("/api/eval/{tab_id}")
 async def eval_js(tab_id: str, request: Request):
     """Debug: evaluate JS in a tab."""

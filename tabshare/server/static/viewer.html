@@ -394,6 +394,7 @@
         urlInput.addEventListener('keyup', (e) => e.stopPropagation());
 
         let ws, pc;
+        let sfuSubId = null; // SFU subscriber ID for fast track switching
         let _popupOverlayTimer = null;
         let statusFadeTimer = null;
 
@@ -464,6 +465,7 @@
                 }
 
                 const answer = await res.json();
+                if (answer.sub_id) sfuSubId = answer.sub_id;
                 await pc.setRemoteDescription(new RTCSessionDescription({
                     type: answer.type,
                     sdp: answer.sdp
@@ -812,12 +814,37 @@
             }
         }
 
-        function switchTab(newTabId) {
+        async function switchTab(newTabId) {
             if (newTabId === activeTabId) return;
+            const oldTabId = activeTabId;
             activeTabId = newTabId;
             tabLabel.textContent = activeTabId;
             document.title = `TabShare - ${activeTabId}`;
             history.replaceState(null, '', `/viewer/${activeTabId}`);
+
+            // Fast path: if PC is connected and we have a sub_id, use /switch
+            if (pc && sfuSubId && pc.iceConnectionState === 'connected') {
+                try {
+                    setStatus('Switching…', 'connecting');
+                    // Reconnect WS (lightweight)
+                    if (ws) { ws.onclose = null; ws.close(); }
+                    connectWS();
+
+                    const res = await fetch(`/api/sfu/switch?sub_id=${sfuSubId}&room=${activeTabId}`, {
+                        method: 'POST'
+                    });
+                    if (res.ok) {
+                        console.log('[viewer] fast switch to', activeTabId);
+                        // Video will update automatically via ReplaceTrack
+                        return;
+                    }
+                    console.warn('[viewer] switch failed, falling back to reconnect');
+                } catch(e) {
+                    console.warn('[viewer] switch error, falling back:', e);
+                }
+            }
+
+            // Slow path: full reconnect
             startSession();
         }
 
