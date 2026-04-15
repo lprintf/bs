@@ -29,6 +29,8 @@ services:
       - ./tabshare/data:/data
     environment:
       - SFU_INTERNAL_URL=http://127.0.0.1:8088
+      - REBROWSER_PATCHES_SOURCE_URL=app.js
+      - REBROWSER_PATCHES_UTILITY_WORLD_NAME=util
 
 volumes:
   tabshare-data:

@@ -53,9 +53,10 @@
     };
   }
 
-  // 0b. 隐藏 sourceURL 注入标记
-  // Playwright 在 evaluate 时添加 //# sourceURL=__playwright_evaluation_script__
-  // 通过 Proxy 拦截 eval，但这个通常不暴露给页面JS
+  // 0c. 清除 Playwright 注入的全局变量
+  try { delete window.__pwInitScripts; } catch (e) {}
+  try { delete window.__playwright; } catch (e) {}
+  try { delete window.__pw_manual; } catch (e) {}
 
   const FP = {{FINGERPRINT_JSON}};
 
