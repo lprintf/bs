@@ -10,10 +10,13 @@ services:
       - "59055:59055/udp"
       - "59055:59055/tcp"
       - "8085:8085" # TabShare HTTP (exposed via shared network)
+    volumes:
+      - ./tabshare/data/recordings:/data/recordings
     environment:
       - NAT_IP=${HOST_IP}
       - UDP_PORT=59055
       - HTTP_PORT=8088
+      - RECORDING_DIR=/data/recordings
 
   tabshare:
     build:

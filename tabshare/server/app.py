@@ -81,6 +81,24 @@ async def sfu_switch_proxy(request: Request):
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=502)
 
+@app.api_route("/api/sfu/recording", methods=["GET", "POST"])
+async def sfu_recording_proxy(request: Request):
+    """Proxy recording control to Go SFU."""
+    query = str(request.url.query)
+    try:
+        async with httpx.AsyncClient() as client:
+            if request.method == "GET":
+                resp = await client.get(f"{SFU_URL}/recording?{query}", timeout=5.0)
+            else:
+                resp = await client.post(f"{SFU_URL}/recording?{query}", timeout=5.0)
+        try:
+            data = resp.json()
+        except Exception:
+            data = {"error": resp.text}
+        return JSONResponse(content=data, status_code=resp.status_code)
+    except Exception as e:
+        return JSONResponse(content={"error": str(e)}, status_code=502)
+
 @app.post("/api/eval/{tab_id}")
 async def eval_js(tab_id: str, request: Request):
     """Debug: evaluate JS in a tab."""

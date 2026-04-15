@@ -23,6 +23,7 @@ type Room struct {
 	videoTrack  *webrtc.TrackLocalStaticRTP
 	publisher   *webrtc.PeerConnection
 	subscribers map[string]*Subscriber // id -> subscriber
+	recorder    *Recorder              // WebM recorder (nil = not recording)
 	// RTP sequence/timestamp continuity across publisher reconnects
 	seqOffset uint16
 	tsOffset  uint32
@@ -107,6 +108,7 @@ func main() {
 	// --- HTTP signaling ---
 	http.HandleFunc("/offer", handleOffer)
 	http.HandleFunc("/switch", handleSwitch)
+	http.HandleFunc("/recording", handleRecording)
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("ok"))
 	})
@@ -255,6 +257,14 @@ func handlePublisher(room *Room, offer webrtc.SessionDescription) (*webrtc.Sessi
 			room.lastSeq = pkt.Header.SequenceNumber
 			room.lastTS = pkt.Header.Timestamp
 			room.mu.Unlock()
+
+			// Tee to recorder (before rewriting — use original timestamps)
+			room.mu.RLock()
+			rec := room.recorder
+			room.mu.RUnlock()
+			if rec != nil {
+				rec.PushRTP(pkt)
+			}
 
 			if writeErr := videoTrack.WriteRTP(pkt); writeErr != nil {
 				log.Printf("[pub] track write error: %v", writeErr)
@@ -458,4 +468,81 @@ func handleSwitch(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "room": newRoom})
+}
+
+// handleRecording controls recording per room.
+// POST /recording?room=xxx&action=start|stop
+// GET  /recording?room=xxx  → status
+func handleRecording(w http.ResponseWriter, r *http.Request) {
+	roomName := r.URL.Query().Get("room")
+	if roomName == "" {
+		http.Error(w, "need ?room=xxx", http.StatusBadRequest)
+		return
+	}
+
+	room := getRoom(roomName)
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method == http.MethodGet {
+		// Status
+		room.mu.RLock()
+		rec := room.recorder
+		room.mu.RUnlock()
+
+		status := map[string]interface{}{"room": roomName, "recording": false}
+		if rec != nil {
+			status["recording"] = true
+			status["file"] = rec.FilePath()
+		}
+		json.NewEncoder(w).Encode(status)
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		http.Error(w, "GET or POST only", http.StatusMethodNotAllowed)
+		return
+	}
+
+	action := r.URL.Query().Get("action")
+	switch action {
+	case "start":
+		room.mu.Lock()
+		if room.recorder != nil {
+			room.mu.Unlock()
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"status": "already_recording",
+				"file":   room.recorder.FilePath(),
+			})
+			return
+		}
+		rec := NewRecorder(roomName)
+		room.recorder = rec
+		room.mu.Unlock()
+
+		log.Printf("[recording] started for room %s", roomName)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status": "started",
+			"file":   rec.FilePath(),
+		})
+
+	case "stop":
+		room.mu.Lock()
+		rec := room.recorder
+		room.recorder = nil
+		room.mu.Unlock()
+
+		if rec == nil {
+			json.NewEncoder(w).Encode(map[string]string{"status": "not_recording"})
+			return
+		}
+		rec.Close()
+		log.Printf("[recording] stopped for room %s", roomName)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status": "stopped",
+			"file":   rec.FilePath(),
+		})
+
+	default:
+		http.Error(w, "need ?action=start|stop", http.StatusBadRequest)
+	}
 }
