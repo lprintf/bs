@@ -65,7 +65,7 @@ def _detect_chrome_version() -> str:
             out = subprocess.check_output(
                 [chrome_path, "--version"], timeout=5, text=True
             ).strip()
-            # "Google Chrome for Testing 147.0.7727.50" -> "147.0.7727.50"
+            # "Google Chrome 137.0.7151.68" -> "137.0.7151.68"
             parts = out.split()
             for p in reversed(parts):
                 if p[0].isdigit() and "." in p:
@@ -101,9 +101,9 @@ def generate_fingerprint(browser_id: str) -> Fingerprint:
     fp.user_agent = rng.choice(_UA_TEMPLATES).format(version=chrome_ver)
 
     # Hardware
-    # deviceMemory API 合法值: 0.25, 0.5, 1, 2, 4, 8（最大 8）
-    fp.hardware_concurrency = rng.choice([4, 8, 16])
-    fp.device_memory = rng.choice([4, 8])
+    # deviceMemory API 合法值: 0.25, 0.5, 1, 2, 4, 8（最大 8，浏览器标准）
+    fp.hardware_concurrency = rng.choice([8, 16])
+    fp.device_memory = 8  # 固定最大值，匹配高端机器
     fp.screen_width = rng.choice([1920, 2560, 3440])
     fp.screen_height = rng.choice([1080, 1440])
     fp.pixel_ratio = 1.0  # Linux 桌面一般是 1.0

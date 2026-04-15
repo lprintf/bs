@@ -27,7 +27,6 @@ services:
     volumes:
       - ./tabshare:/app
       - ./tabshare/data:/data
-      - ./tabshare/data/opt/chromium:/data/opt/chromium:ro # 暂时不用
     environment:
       - SFU_INTERNAL_URL=http://127.0.0.1:8088
 

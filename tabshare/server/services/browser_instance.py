@@ -156,7 +156,8 @@ class BrowserInstance:
                 "headless": False,  # 由 args 中的 --headless=new 控制
                 "args": launch_args,
                 "ignore_default_args": ["--headless", "--headless=old", "--enable-automation"],
-                "user_agent": self.fingerprint.user_agent,  # 必须覆盖：Chrome for Testing 的真实 UA 包含 HeadlessChrome
+                # Chrome Stable 原生 UA 不含 HeadlessChrome，无需覆盖
+                # 覆盖 UA 本身是可检测行为（Chrome 内部有校验机制）
                 "locale": self.fingerprint.locale,
                 "timezone_id": self.fingerprint.timezone,
                 "geolocation": {
@@ -166,10 +167,8 @@ class BrowserInstance:
                 "permissions": ["geolocation"],
                 "viewport": DEFAULT_VIEWPORT,
                 "accept_downloads": True,
-                # headers 覆盖：Accept-Language + Sec-Ch-Ua
                 "extra_http_headers": {
                     "Accept-Language": f"{self.fingerprint.locale},{self.fingerprint.locale.split('-')[0]};q=0.9",
-                    "Sec-Ch-Ua": self._build_sec_ch_ua(),
                 },
             }
             if CHROME_PATH:

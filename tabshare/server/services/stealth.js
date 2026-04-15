@@ -90,76 +90,24 @@
 
   // ========== 1. navigator.webdriver ==========
   // 正常 Chrome: navigator.webdriver === false（不是 undefined）
-  // 直接在原型上重定义，不删除
   try {
     Object.defineProperty(Navigator.prototype, 'webdriver', {
-      get: () => false,
+      get: markNative(function webdriver() { return false; }),
       configurable: true,
       enumerable: true,
     });
   } catch (e) {}
 
-  // ========== 1b. userAgentData.brands ==========
-  // Chrome for Testing 的 brands 不含 "Google Chrome"，需要补上
-  // 从 UA 中提取版本号
-  const chromeMatch = FP.user_agent.match(/Chrome\/(\d+)/);
-  const chromeMajor = chromeMatch ? chromeMatch[1] : '147';
-  const fullVersionMatch = FP.user_agent.match(/Chrome\/([\d.]+)/);
-  const chromeFullVersion = fullVersionMatch ? fullVersionMatch[1] : chromeMajor + '.0.0.0';
-
-  const spoofedBrands = [
-    { brand: 'Google Chrome', version: chromeMajor },
-    { brand: 'Chromium', version: chromeMajor },
-    { brand: 'Not.A/Brand', version: '8' },
-  ];
-  const spoofedBrandsFull = [
-    { brand: 'Google Chrome', version: chromeFullVersion },
-    { brand: 'Chromium', version: chromeFullVersion },
-    { brand: 'Not.A/Brand', version: '8.0.0.0' },
-  ];
-
-  if (navigator.userAgentData) {
-    const origUAData = navigator.userAgentData;
-    const platform = FP.os === 'mac' ? 'macOS' : FP.os === 'win' ? 'Windows' : 'Linux';
-
-    Object.defineProperty(Navigator.prototype, 'userAgentData', {
-      get: markNative(function () {
-        return Object.create(origUAData.__proto__ || Object.getPrototypeOf(origUAData), {
-          brands: { get: () => Object.freeze(spoofedBrands), enumerable: true },
-          mobile: { get: () => false, enumerable: true },
-          platform: { get: () => platform, enumerable: true },
-          getHighEntropyValues: {
-            value: markNative(function (hints) {
-              return Promise.resolve({
-                brands: spoofedBrands,
-                fullVersionList: spoofedBrandsFull,
-                mobile: false,
-                platform: platform,
-                platformVersion: FP.os === 'win' ? '15.0.0' : FP.os === 'mac' ? '14.5.0' : '6.5.0',
-                architecture: 'x86',
-                bitness: '64',
-                model: '',
-                uaFullVersion: chromeFullVersion,
-              });
-            }),
-            enumerable: true,
-          },
-        });
-      }),
-      configurable: true,
-      enumerable: true,
-    });
-  }
 
   // ========== 2. 硬件信息 ==========
   // 定义在 Navigator.prototype 上，使 getOwnPropertyNames(navigator) 返回空数组
   Object.defineProperty(Navigator.prototype, 'hardwareConcurrency', {
-    get: () => FP.hardware_concurrency,
+    get: markNative(function hardwareConcurrency() { return FP.hardware_concurrency; }),
     configurable: true,
     enumerable: true,
   });
   Object.defineProperty(Navigator.prototype, 'deviceMemory', {
-    get: () => FP.device_memory,
+    get: markNative(function deviceMemory() { return FP.device_memory; }),
     configurable: true,
     enumerable: true,
   });
@@ -168,43 +116,43 @@
   const primaryLang = FP.locale;
   const baseLang = FP.locale.split('-')[0];
   Object.defineProperty(Navigator.prototype, 'language', {
-    get: () => primaryLang,
+    get: markNative(function language() { return primaryLang; }),
     configurable: true,
     enumerable: true,
   });
   Object.defineProperty(Navigator.prototype, 'languages', {
-    get: () => Object.freeze([primaryLang, baseLang]),
+    get: markNative(function languages() { return Object.freeze([primaryLang, baseLang]); }),
     configurable: true,
     enumerable: true,
   });
 
   // ========== 4. Screen / Display ==========
   Object.defineProperty(screen, 'width', {
-    get: () => FP.screen_width,
+    get: markNative(function width() { return FP.screen_width; }),
     configurable: true,
   });
   Object.defineProperty(screen, 'height', {
-    get: () => FP.screen_height,
+    get: markNative(function height() { return FP.screen_height; }),
     configurable: true,
   });
   Object.defineProperty(screen, 'availWidth', {
-    get: () => FP.screen_width,
+    get: markNative(function availWidth() { return FP.screen_width; }),
     configurable: true,
   });
   Object.defineProperty(screen, 'availHeight', {
-    get: () => FP.screen_height - 25, // macOS menu bar
+    get: markNative(function availHeight() { return FP.screen_height - 25; }),
     configurable: true,
   });
   Object.defineProperty(screen, 'colorDepth', {
-    get: () => FP.color_depth,
+    get: markNative(function colorDepth() { return FP.color_depth; }),
     configurable: true,
   });
   Object.defineProperty(screen, 'pixelDepth', {
-    get: () => FP.color_depth,
+    get: markNative(function pixelDepth() { return FP.color_depth; }),
     configurable: true,
   });
   Object.defineProperty(window, 'devicePixelRatio', {
-    get: () => FP.pixel_ratio,
+    get: markNative(function devicePixelRatio() { return FP.pixel_ratio; }),
     configurable: true,
   });
 
@@ -241,13 +189,12 @@
     return data;
   }
 
-  HTMLCanvasElement.prototype.toDataURL = function () {
+  HTMLCanvasElement.prototype.toDataURL = markNative(function toDataURL() {
     try {
       const ctx = this.getContext('2d');
       if (ctx && this.width > 0 && this.height > 0) {
         const orig = _origGetImageData.call(ctx, 0, 0, this.width, this.height);
         const noised = applyCanvasNoise(orig.data);
-        // 临时 canvas 写入噪声数据
         const tmp = document.createElement('canvas');
         tmp.width = this.width;
         tmp.height = this.height;
@@ -259,9 +206,9 @@
       }
     } catch (e) {}
     return _origToDataURL.apply(this, arguments);
-  };
+  });
 
-  HTMLCanvasElement.prototype.toBlob = function () {
+  HTMLCanvasElement.prototype.toBlob = markNative(function toBlob() {
     try {
       const ctx = this.getContext('2d');
       if (ctx && this.width > 0 && this.height > 0) {
@@ -278,9 +225,9 @@
       }
     } catch (e) {}
     return _origToBlob.apply(this, arguments);
-  };
+  });
 
-  CanvasRenderingContext2D.prototype.getImageData = function () {
+  CanvasRenderingContext2D.prototype.getImageData = markNative(function getImageData() {
     const result = _origGetImageData.apply(this, arguments);
     const data = result.data;
 
@@ -303,25 +250,15 @@
       }
     }
     return result;
-  };
+  });
 
-  // ========== 6. WebGL 指纹 ==========
-  const UNMASKED_VENDOR_WEBGL = 0x9245;
-  const UNMASKED_RENDERER_WEBGL = 0x9246;
-
+  // ========== 6. WebGL 指纹噪音 ==========
+  // 不伪装 vendor/renderer（SwiftShader 原值内部一致，伪装反而暴露不匹配）
+  // 只对 readPixels 加噪音使指纹唯一
   function patchWebGL(proto) {
-    const origGetParam = proto.getParameter;
-    proto.getParameter = function (param) {
-      if (param === UNMASKED_VENDOR_WEBGL) return FP.webgl_vendor;
-      if (param === UNMASKED_RENDERER_WEBGL) return FP.webgl_renderer;
-      return origGetParam.call(this, param);
-    };
-
-    // readPixels 噪音
     const origReadPixels = proto.readPixels;
-    proto.readPixels = function () {
+    proto.readPixels = markNative(function readPixels() {
       origReadPixels.apply(this, arguments);
-      // arguments[6] 是 pixels ArrayBufferView
       const pixels = arguments[6];
       if (pixels && pixels.length) {
         const rng = mulberry32(FP.webgl_noise_seed);
@@ -331,7 +268,7 @@
           pixels[idx] = (pixels[idx] + Math.floor(rng() * 3) - 1) & 0xff;
         }
       }
-    };
+    });
   }
 
   if (typeof WebGLRenderingContext !== 'undefined') {
@@ -377,12 +314,12 @@
       chargingTime: Infinity,
       dischargingTime: Infinity,
       level: 0.95 + mulberry32(FP.canvas_noise_seed + 100)() * 0.05,
-      addEventListener: () => {},
-      removeEventListener: () => {},
-      dispatchEvent: () => true,
+      addEventListener: markNative(function addEventListener() {}),
+      removeEventListener: markNative(function removeEventListener() {}),
+      dispatchEvent: markNative(function dispatchEvent() { return true; }),
     };
     Object.defineProperty(Navigator.prototype, 'getBattery', {
-      value: () => Promise.resolve(fakeBattery),
+      value: markNative(function getBattery() { return Promise.resolve(fakeBattery); }),
       configurable: true,
       writable: true,
       enumerable: true,
@@ -449,12 +386,11 @@
     // 通过 Proxy 包装原生 PluginArray 来注入 length
     try {
       Object.defineProperty(Navigator.prototype, 'plugins', {
-        get: () => {
+        get: markNative(function plugins() {
           const proxy = new Proxy(origPlugins, {
             get(target, prop) {
               if (prop === 'length') return 3;
               if (prop === Symbol.toStringTag) return 'PluginArray';
-              // item() 和索引访问伪造 Plugin 对象
               if (typeof prop === 'string' && /^\d+$/.test(prop)) {
                 const fakePlugins = [
                   { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
@@ -463,16 +399,15 @@
                 ];
                 return fakePlugins[Number(prop)];
               }
-              if (prop === 'item') return (i) => proxy[i];
-              if (prop === 'namedItem') return (name) => [proxy[0], proxy[1], proxy[2]].find(p => p?.name === name) || null;
-              if (prop === 'refresh') return () => {};
+              if (prop === 'item') return markNative(function item(i) { return proxy[i]; });
+              if (prop === 'namedItem') return markNative(function namedItem(name) { return [proxy[0], proxy[1], proxy[2]].find(p => p?.name === name) || null; });
+              if (prop === 'refresh') return markNative(function refresh() {});
               return Reflect.get(target, prop);
             },
           });
-          // 保持 instanceof PluginArray 为 true
           Object.setPrototypeOf(proxy, PluginArray.prototype);
           return proxy;
-        },
+        }),
         configurable: true,
       });
     } catch (e) {}
@@ -497,9 +432,9 @@
 
   // ========== 12. DoNotTrack ==========
   if (FP.do_not_track === '1') {
-    Object.defineProperty(Navigator.prototype, 'doNotTrack', { get: () => '1', configurable: true, enumerable: true });
+    Object.defineProperty(Navigator.prototype, 'doNotTrack', { get: markNative(function doNotTrack() { return '1'; }), configurable: true, enumerable: true });
   } else if (FP.do_not_track === '0') {
-    Object.defineProperty(Navigator.prototype, 'doNotTrack', { get: () => '0', configurable: true, enumerable: true });
+    Object.defineProperty(Navigator.prototype, 'doNotTrack', { get: markNative(function doNotTrack() { return '0'; }), configurable: true, enumerable: true });
   }
   // "unset" = 保持默认
 
@@ -538,7 +473,7 @@
   // headless 下 Notification.permission 返回 "denied"，正常浏览器返回 "default"
   try {
     Object.defineProperty(Notification, 'permission', {
-      get: () => 'default',
+      get: markNative(function permission() { return 'default'; }),
       configurable: true,
     });
   } catch (e) {}
