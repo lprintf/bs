@@ -156,8 +156,7 @@ class BrowserInstance:
                 "headless": False,  # 由 args 中的 --headless=new 控制
                 "args": launch_args,
                 "ignore_default_args": ["--headless", "--headless=old", "--enable-automation"],
-                # Chrome Stable 原生 UA 不含 HeadlessChrome，无需覆盖
-                # 覆盖 UA 本身是可检测行为（Chrome 内部有校验机制）
+                "user_agent": self.fingerprint.user_agent,
                 "locale": self.fingerprint.locale,
                 "timezone_id": self.fingerprint.timezone,
                 "geolocation": {
