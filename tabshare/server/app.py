@@ -73,7 +73,11 @@ async def sfu_switch_proxy(request: Request):
                 f"{SFU_URL}/switch?{query}",
                 timeout=5.0,
             )
-        return JSONResponse(content=resp.json(), status_code=resp.status_code)
+        try:
+            data = resp.json()
+        except Exception:
+            data = {"error": resp.text}
+        return JSONResponse(content=data, status_code=resp.status_code)
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=502)
 
