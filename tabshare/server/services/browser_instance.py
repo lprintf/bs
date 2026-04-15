@@ -6,6 +6,7 @@ BrowserInstance — 管理单个 Playwright persistent context（独立指纹/�
 """
 import asyncio
 import json
+import os
 from dataclasses import asdict
 from pathlib import Path
 from typing import Optional
@@ -14,11 +15,11 @@ from server.config import CHROME_PATH, BROWSER_DATA_DIR
 from server.services.fingerprint import load_or_create_fingerprint, save_fingerprint, Fingerprint
 from server.services.tab_publisher import TabPublisher
 
-# 反检测启动参数
+# 反检测启动参数（有头模式，通过 Xvfb 提供虚拟显示器）
 BASE_ARGS = [
-    "--headless=new",
     "--use-gl=angle",
     "--use-angle=swiftshader-webgl",  # 软件渲染 WebGL，无需 GPU
+    "--disable-gpu",  # 避免有头模式尝试使用不存在的 GPU 硬件
     "--disable-blink-features=AutomationControlled",
     "--disable-features=WebRtcHideLocalIpsWithMdns",
     "--no-sandbox",
@@ -148,16 +149,15 @@ class BrowserInstance:
             launch_args = BASE_ARGS.copy()
             launch_args.append(f"--lang={self.fingerprint.locale}")
 
-            # 4. launch_persistent_context
+
+            # 5. launch_persistent_context
             self.playwright = await async_playwright().start()
 
             launch_kwargs = {
                 "user_data_dir": str(profile_dir),
-                "headless": False,  # 由 args 中的 --headless=new 控制
+                "headless": False,  # 有头模式，通过 Xvfb 提供虚拟显示器
                 "args": launch_args,
-                "ignore_default_args": ["--headless", "--headless=old", "--enable-automation"],
-                # Chrome Stable 原生 UA 不含 HeadlessChrome，无需覆盖
-                # 覆盖 UA 本身是可检测行为（Chrome 内部有校验机制）
+                "ignore_default_args": ["--enable-automation"],
                 "locale": self.fingerprint.locale,
                 "timezone_id": self.fingerprint.timezone,
                 "geolocation": {
@@ -191,10 +191,8 @@ class BrowserInstance:
             stealth_js = self._build_stealth_script()
             await self.context.add_init_script(stealth_js)
 
-            # 关闭 persistent context 自带的空白页
-            for page in self.context.pages:
-                if page.url in ("about:blank", "chrome://newtab/"):
-                    await page.close()
+            # 有头模式下不关闭初始页面（关掉唯一页面会杀掉浏览器）
+            # create_tab 会复用 context.pages[0]
 
             self.status = "idle"
             print(
@@ -250,7 +248,19 @@ class BrowserInstance:
         self._tab_counter += 1
         tab_id = f"{self.browser_id}_tab_{self._tab_counter}"
 
-        page = await self.context.new_page()
+        # launch_persistent_context 有头模式下已有一个初始页面，优先复用
+        existing_pages = self.context.pages
+        if existing_pages and self._tab_counter == 1:
+            page = existing_pages[0]
+        else:
+            try:
+                page = await self.context.new_page()
+            except Exception:
+                # 有头模式下 new_page 可能失败，尝试复用最后一个页面
+                if existing_pages:
+                    page = existing_pages[-1]
+                else:
+                    raise
 
         if viewport:
             await page.set_viewport_size(viewport)

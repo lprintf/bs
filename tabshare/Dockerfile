@@ -21,4 +21,5 @@ EXPOSE 8085
 # 使用 apt 安装的 Google Chrome Stable
 ENV CHROME_PATH=/opt/google/chrome/google-chrome
 
-CMD ["python", "-u", "-m", "server.app"]
+# Xvfb 有头模式 + Python 应用
+CMD ["bash", "/app/entrypoint.sh"]

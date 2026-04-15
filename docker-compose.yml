@@ -29,6 +29,7 @@ services:
       - ./tabshare/data:/data
     environment:
       - SFU_INTERNAL_URL=http://127.0.0.1:8088
+      - DISPLAY=:99
 
 volumes:
   tabshare-data:
