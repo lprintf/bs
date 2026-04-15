@@ -709,9 +709,18 @@
         
         let isComposing = false;
 
+        // Release all modifier keys on remote to prevent stuck keys
+        // (IME toggle via Shift/Ctrl swallows the keyup event)
+        function resetModifiers() {
+            for (const mod of ['Shift', 'Control', 'Alt', 'Meta']) {
+                sendInput({ type: 'keyboard', eventType: 'keyUp', key: mod, code: '' });
+            }
+        }
+
         imeTrap.addEventListener('compositionstart', () => {
             console.log("IME: compositionstart");
             isComposing = true;
+            resetModifiers();
         });
 
         imeTrap.addEventListener('compositionend', (e) => {
