@@ -258,12 +258,17 @@ func handlePublisher(room *Room, offer webrtc.SessionDescription) (*webrtc.Sessi
 			room.lastTS = pkt.Header.Timestamp
 			room.mu.Unlock()
 
-			// Tee to recorder (before rewriting — use original timestamps)
+			// Tee to recorder (clone to avoid buf reuse corruption)
 			room.mu.RLock()
 			rec := room.recorder
 			room.mu.RUnlock()
 			if rec != nil {
-				rec.PushRTP(pkt)
+				clonedPkt := &rtp.Packet{
+					Header:  pkt.Header,
+					Payload: make([]byte, len(pkt.Payload)),
+				}
+				copy(clonedPkt.Payload, pkt.Payload)
+				rec.PushRTP(clonedPkt)
 			}
 
 			if writeErr := videoTrack.WriteRTP(pkt); writeErr != nil {
