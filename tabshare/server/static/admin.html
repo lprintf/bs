@@ -166,6 +166,12 @@
                         <input type="text" class="form-control" id="newProxy" placeholder="http://proxy:port or socks5://...">
                     </div>
                     <div class="form-group">
+                        <label>Chrome Version</label>
+                        <select class="form-control" id="newChromeVersion">
+                            <option value="">Auto (real binary version)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
                         <label>Data Directory (optional)</label>
                         <input type="text" class="form-control" id="newDataDir" placeholder="data/browsers/{id}">
                     </div>
@@ -233,6 +239,12 @@
                     <div class="form-group">
                         <label>Proxy</label>
                         <input type="text" class="form-control" id="editProxy" placeholder="http://proxy:port (empty to remove)">
+                    </div>
+                    <div class="form-group">
+                        <label>Chrome Version <small style="color:#999">(changing regenerates fingerprint)</small></label>
+                        <select class="form-control" id="editChromeVersion">
+                            <option value="">Auto (real binary version)</option>
+                        </select>
                     </div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" onclick="hideModal('editBrowserModal')">Cancel</button>
@@ -324,11 +336,11 @@
                 <td>
                     ${b.status === 'idle' ? `
                         <button class="btn btn-primary" onclick="showCreateTabModal('${b.browser_id}')">+ Tab</button>
-                        <button class="btn btn-secondary" onclick="showEditBrowserModal('${b.browser_id}', '${b.proxy || ''}')">Edit</button>
+                        <button class="btn btn-secondary" onclick="showEditBrowserModal('${b.browser_id}', '${b.proxy || ''}', '${b.chrome_version || ''}')">Edit</button>
                         <button class="btn btn-warning" onclick="closeBrowser('${b.browser_id}')">Stop</button>
                     ` : b.status === 'closed' || b.status === 'error' ? `
                         <button class="btn btn-success" onclick="launchBrowser('${b.browser_id}')">Launch</button>
-                        <button class="btn btn-secondary" onclick="showEditBrowserModal('${b.browser_id}', '${b.proxy || ''}')">Edit</button>
+                        <button class="btn btn-secondary" onclick="showEditBrowserModal('${b.browser_id}', '${b.proxy || ''}', '${b.chrome_version || ''}')">Edit</button>
                         <button class="btn btn-danger" onclick="deleteBrowser('${b.browser_id}')">Delete</button>
                     ` : `<span class="status-badge status-launching">${b.status}...</span>`}
                 </td>
@@ -376,9 +388,11 @@
         const id = document.getElementById('newBrowserId').value.trim();
         const proxy = document.getElementById('newProxy').value.trim();
         const dir = document.getElementById('newDataDir').value.trim();
+        const ver = document.getElementById('newChromeVersion').value;
         if (id) body.browser_id = id;
         if (proxy) body.proxy = proxy;
         if (dir) body.user_data_dir = dir;
+        if (ver) body.chrome_version = ver;
         try {
             await api('POST', '/api/admin/browsers', body);
             hideModal('createBrowserModal');
@@ -429,9 +443,10 @@
         } catch(e) { showToast(e.message, 'error'); }
     }
 
-    function showEditBrowserModal(bid, proxy) {
+    function showEditBrowserModal(bid, proxy, chromeVersion) {
         document.getElementById('editBrowserId').value = bid;
         document.getElementById('editProxy').value = proxy;
+        document.getElementById('editChromeVersion').value = chromeVersion || '';
         showModal('editBrowserModal');
     }
 
@@ -439,10 +454,14 @@
         e.preventDefault();
         const bid = document.getElementById('editBrowserId').value;
         const proxy = document.getElementById('editProxy').value.trim();
+        const ver = document.getElementById('editChromeVersion').value;
         try {
-            await api('PUT', `/api/admin/browsers/${bid}`, {proxy: proxy || null});
+            await api('PUT', `/api/admin/browsers/${bid}`, {
+                proxy: proxy || null,
+                chrome_version: ver || null,
+            });
             hideModal('editBrowserModal');
-            showToast('Browser updated', 'success');
+            showToast('Browser updated (restart to apply)', 'success');
             refreshData();
         } catch(e) { showToast(e.message, 'error'); }
     }
@@ -529,7 +548,23 @@
         } catch(e) { showToast(e.message, 'error'); }
     }
 
+    // ── Chrome Versions ──
+    async function loadChromeVersions() {
+        try {
+            const data = await api('GET', '/api/admin/chrome-versions');
+            const selects = ['newChromeVersion', 'editChromeVersion'];
+            selects.forEach(id => {
+                const sel = document.getElementById(id);
+                sel.innerHTML = `<option value="">Auto (${data.real_version})</option>`;
+                data.available_versions.forEach(v => {
+                    sel.innerHTML += `<option value="${v}">${v}</option>`;
+                });
+            });
+        } catch(e) { console.warn('Failed to load chrome versions', e); }
+    }
+
     // ── Init ──
+    loadChromeVersions();
     refreshData();
     setInterval(refreshData, 10000);
     </script>
