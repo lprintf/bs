@@ -21,6 +21,7 @@ class BrowserManager:
         user_data_dir: Optional[str] = None,
         locale: Optional[str] = None,
         timezone: Optional[str] = None,
+        chrome_version: Optional[str] = None,
         auto_start: bool = True,
     ) -> BrowserInstance:
         if not browser_id:
@@ -36,6 +37,7 @@ class BrowserManager:
             user_data_dir=user_data_dir,
             locale=locale,
             timezone=timezone,
+            chrome_version=chrome_version,
         )
         self.browsers[browser_id] = browser
 
@@ -53,6 +55,19 @@ class BrowserManager:
             browser.proxy = updates["proxy"]
         if "user_data_dir" in updates:
             browser.user_data_dir = updates["user_data_dir"]
+        if "chrome_version" in updates:
+            old_ver = browser.chrome_version
+            browser.chrome_version = updates["chrome_version"] or None
+            # 版本变更时重新生成指纹
+            if browser.chrome_version != old_ver:
+                from server.services.fingerprint import load_or_create_fingerprint
+                from pathlib import Path
+                browser_dir = Path(browser.user_data_dir)
+                browser.fingerprint = load_or_create_fingerprint(
+                    browser_dir, browser_id,
+                    chrome_version=browser.chrome_version,
+                    force_regen=True,
+                )
 
         return browser
 

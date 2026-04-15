@@ -19,12 +19,14 @@ class CreateBrowserRequest(BaseModel):
     user_data_dir: Optional[str] = None
     locale: Optional[str] = None       # e.g. "en-US", "en-US"
     timezone: Optional[str] = None     # e.g. "America/Los_Angeles"
+    chrome_version: Optional[str] = None  # e.g. "146.0.7680.177", None=真实版本
     auto_start: bool = True
 
 
 class UpdateBrowserRequest(BaseModel):
     proxy: Optional[str] = None
     user_data_dir: Optional[str] = None
+    chrome_version: Optional[str] = None  # 修改版本号，会重新生成指纹
 
 
 class CreateTabRequest(BaseModel):
@@ -49,6 +51,19 @@ async def get_dashboard():
     return browser_manager.get_dashboard()
 
 
+# ── Chrome Versions ──
+
+@router.get("/chrome-versions")
+async def get_chrome_versions():
+    """返回可用的 Chrome 版本号列表（供前端选择）"""
+    from server.services.fingerprint import _CHROME_VERSIONS, _detect_chrome_version
+    real_ver = _detect_chrome_version()
+    return {
+        "real_version": real_ver,
+        "available_versions": _CHROME_VERSIONS,
+    }
+
+
 # ── Browser CRUD ──
 
 @router.get("/browsers")
@@ -68,6 +83,7 @@ async def create_browser(req: CreateBrowserRequest):
             user_data_dir=req.user_data_dir,
             locale=req.locale,
             timezone=req.timezone,
+            chrome_version=req.chrome_version,
             auto_start=req.auto_start,
         )
         return browser.to_dict()

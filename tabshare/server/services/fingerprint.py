@@ -104,8 +104,10 @@ _WEBGL_CONFIGS = [
 ]
 
 
-def generate_fingerprint(browser_id: str) -> Fingerprint:
-    """为新浏览器生成一份稳定的指纹（基于 browser_id 派生，确保可重现）"""
+def generate_fingerprint(browser_id: str, chrome_version: str | None = None) -> Fingerprint:
+    """为新浏览器生成一份稳定的指纹（基于 browser_id 派生，确保可重现）
+    chrome_version: 指定 Chrome 版本号，None 则使用真实二进制版本
+    """
     seed = int(hashlib.md5(browser_id.encode()).hexdigest()[:8], 16)
     rng = random.Random(seed)
 
@@ -114,9 +116,8 @@ def generate_fingerprint(browser_id: str) -> Fingerprint:
         f"fp_{browser_id}_{seed}".encode()
     ).hexdigest()[:20]
 
-    # UA — 使用真实 Chrome 版本号（从版本列表随机选取）
-    # headless 模式特性检测通常比实际二进制低一个大版本，所以用 146 系列
-    chrome_ver = rng.choice(_CHROME_VERSIONS)
+    # UA — 默认用真实二进制版本，可通过参数覆盖
+    chrome_ver = chrome_version or _detect_chrome_version()
     fp.user_agent = rng.choice(_UA_TEMPLATES).format(version=chrome_ver)
 
     # Hardware
@@ -138,10 +139,18 @@ def generate_fingerprint(browser_id: str) -> Fingerprint:
     return fp
 
 
-def load_or_create_fingerprint(browser_dir: Path, browser_id: str) -> Fingerprint:
-    """加载已有指纹或生成新的，并持久化到 fingerprint.json"""
+def load_or_create_fingerprint(
+    browser_dir: Path,
+    browser_id: str,
+    chrome_version: str | None = None,
+    force_regen: bool = False,
+) -> Fingerprint:
+    """加载已有指纹或生成新的，并持久化到 fingerprint.json
+    chrome_version: 指定版本号（None=真实二进制版本）
+    force_regen: 强制重新生成
+    """
     fp_path = browser_dir / "fingerprint.json"
-    if fp_path.exists():
+    if not force_regen and fp_path.exists():
         try:
             data = json.loads(fp_path.read_text())
             fp = Fingerprint(**data)
@@ -150,10 +159,10 @@ def load_or_create_fingerprint(browser_dir: Path, browser_id: str) -> Fingerprin
         except Exception as e:
             print(f"[Fingerprint] Failed to load {fp_path}, regenerating: {e}")
 
-    fp = generate_fingerprint(browser_id)
+    fp = generate_fingerprint(browser_id, chrome_version=chrome_version)
     browser_dir.mkdir(parents=True, exist_ok=True)
     fp_path.write_text(json.dumps(asdict(fp), indent=2, ensure_ascii=False))
-    print(f"[Fingerprint] Generated new: {fp.fingerprint_id} ({browser_id})")
+    print(f"[Fingerprint] Generated new: {fp.fingerprint_id} ({browser_id}, ver={chrome_version or 'auto'})")
     return fp
 
 

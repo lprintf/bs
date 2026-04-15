@@ -85,12 +85,14 @@ class BrowserInstance:
         user_data_dir: Optional[str] = None,
         locale: Optional[str] = None,
         timezone: Optional[str] = None,
+        chrome_version: Optional[str] = None,
     ):
         self.browser_id = browser_id
         self.proxy = proxy
         self.user_data_dir = user_data_dir or f"{BROWSER_DATA_DIR}/{browser_id}"
         self.locale_override = locale
         self.timezone_override = timezone
+        self.chrome_version = chrome_version  # None = 真实二进制版本
         self.status = "closed"  # closed | launching | idle | error
         self.playwright = None
         self.context: Optional[BrowserContext] = None
@@ -120,7 +122,10 @@ class BrowserInstance:
 
         try:
             # 1. 加载/生成指纹
-            self.fingerprint = load_or_create_fingerprint(browser_dir, self.browser_id)
+            self.fingerprint = load_or_create_fingerprint(
+                browser_dir, self.browser_id,
+                chrome_version=self.chrome_version,
+            )
 
             # 2. GeoIP 自动匹配（如果有代理）
             if self.proxy:
@@ -521,6 +526,7 @@ class BrowserInstance:
             "browser_id": self.browser_id,
             "proxy": self.proxy,
             "user_data_dir": self.user_data_dir,
+            "chrome_version": self.chrome_version,
             "status": self.status,
             "fingerprint": fp_info,
             "tab_count": len(self.tabs),
