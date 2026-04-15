@@ -28,48 +28,47 @@ async def websocket_endpoint(websocket: WebSocket, tab_id: str):
             # Track which viewer sent input (for popup routing)
             tab.last_input_ws = websocket
 
-            if t == "mouse":
-                btn = msg.get("button", "none")
-                pw_btn = "left" if btn == "left" else "middle" if btn == "middle" else "right"
-                x, y = msg.get("x", 0), msg.get("y", 0)
+            try:
+                if t == "mouse":
+                    btn = msg.get("button", "none")
+                    pw_btn = "left" if btn == "left" else "middle" if btn == "middle" else "right"
+                    x, y = msg.get("x", 0), msg.get("y", 0)
 
-                if msg.get("eventType") == "mouseMoved":
-                    await page.mouse.move(x, y)
-                elif msg.get("eventType") == "mousePressed":
-                    await page.mouse.move(x, y)
-                    await page.mouse.down(button=pw_btn if btn != "none" else "left")
-                elif msg.get("eventType") == "mouseReleased":
-                    await page.mouse.move(x, y)
-                    await page.mouse.up(button=pw_btn if btn != "none" else "left")
+                    if msg.get("eventType") == "mouseMoved":
+                        await page.mouse.move(x, y)
+                    elif msg.get("eventType") == "mousePressed":
+                        await page.mouse.move(x, y)
+                        await page.mouse.down(button=pw_btn if btn != "none" else "left")
+                    elif msg.get("eventType") == "mouseReleased":
+                        await page.mouse.move(x, y)
+                        await page.mouse.up(button=pw_btn if btn != "none" else "left")
                     
-            elif t == "scroll":
-                await page.mouse.wheel(msg.get("deltaX", 0), msg.get("deltaY", 0))
+                elif t == "scroll":
+                    await page.mouse.wheel(msg.get("deltaX", 0), msg.get("deltaY", 0))
                 
-            elif t == "keyboard":
-                key = msg.get("key", "")
-                if key:
-                    if msg.get("eventType") == "keyDown":
-                        await page.keyboard.down(key)
-                    else:
-                        await page.keyboard.up(key)
+                elif t == "keyboard":
+                    key = msg.get("key", "")
+                    if key:
+                        if msg.get("eventType") == "keyDown":
+                            await page.keyboard.down(key)
+                        else:
+                            await page.keyboard.up(key)
                         
-            elif t == "insertText":
-                text = msg.get("text", "")
-                if text:
-                    await page.keyboard.insert_text(text)
+                elif t == "insertText":
+                    text = msg.get("text", "")
+                    if text:
+                        await page.keyboard.insert_text(text)
 
-            elif t == "viewport":
-                w = msg.get("width", 1280)
-                h = msg.get("height", 720)
-                w = max(320, min(3840, int(w)))
-                h = max(240, min(2160, int(h)))
-                try:
+                elif t == "viewport":
+                    w = msg.get("width", 1280)
+                    h = msg.get("height", 720)
+                    w = max(320, min(3840, int(w)))
+                    h = max(240, min(2160, int(h)))
                     await page.set_viewport_size({"width": w, "height": h})
-                    # Re-capture stream at new resolution
                     if tab.publisher:
                         await tab.publisher.refresh_stream()
-                except Exception as e:
-                    print(f"Viewport resize error: {e}")
+            except Exception as e:
+                print(f"[ws:{tab_id}] input error ({t}): {e}")
                     
     except (WebSocketDisconnect, RuntimeError):
         pass
