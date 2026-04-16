@@ -3,14 +3,62 @@ BrowserManager — Global singleton managing all BrowserInstances.
 Provides tab-level lookups and viewer broadcast for the WS/SFU layer.
 """
 import json
+import os
+from pathlib import Path
 from typing import Optional
 from server.services.browser_instance import BrowserInstance, TabInfo
+from server.config import BROWSER_DATA_DIR
+
+CONFIG_PATH = os.getenv("BROWSER_CONFIG_PATH", "/data/browsers.json")
 
 
 class BrowserManager:
     def __init__(self):
         self.browsers: dict[str, BrowserInstance] = {}
         self._id_counter = 0
+
+    # ── Persistence ──
+
+    def _save_config(self):
+        """Save all browser configs to disk."""
+        configs = []
+        for b in self.browsers.values():
+            configs.append({
+                "browser_id": b.browser_id,
+                "proxy": b.proxy,
+                "user_data_dir": b.user_data_dir,
+                "chrome_version": b.chrome_version,
+            })
+        Path(CONFIG_PATH).parent.mkdir(parents=True, exist_ok=True)
+        with open(CONFIG_PATH, "w") as f:
+            json.dump(configs, f, indent=2)
+
+    def load_config(self):
+        """Load browser configs from disk (all start as closed, no tabs)."""
+        if not os.path.exists(CONFIG_PATH):
+            return
+        try:
+            with open(CONFIG_PATH) as f:
+                configs = json.load(f)
+        except Exception as e:
+            print(f"[browser_manager] failed to load config: {e}")
+            return
+
+        for cfg in configs:
+            bid = cfg.get("browser_id", "")
+            if not bid or bid in self.browsers:
+                continue
+            browser = BrowserInstance(
+                browser_id=bid,
+                proxy=cfg.get("proxy"),
+                user_data_dir=cfg.get("user_data_dir"),
+                chrome_version=cfg.get("chrome_version"),
+            )
+            self.browsers[bid] = browser
+            # Track highest ID for auto-increment
+            if bid.startswith("b") and bid[1:].isdigit():
+                self._id_counter = max(self._id_counter, int(bid[1:]))
+            print(f"[browser_manager] loaded {bid} (closed)")
 
     # ── Browser CRUD ──
 
@@ -40,6 +88,7 @@ class BrowserManager:
             chrome_version=chrome_version,
         )
         self.browsers[browser_id] = browser
+        self._save_config()
 
         if auto_start:
             await browser.launch()
@@ -61,14 +110,15 @@ class BrowserManager:
             # 版本变更时重新生成指纹
             if browser.chrome_version != old_ver:
                 from server.services.fingerprint import load_or_create_fingerprint
-                from pathlib import Path
-                browser_dir = Path(browser.user_data_dir)
+                from pathlib import Path as P
+                browser_dir = P(browser.user_data_dir)
                 browser.fingerprint = load_or_create_fingerprint(
                     browser_dir, browser_id,
                     chrome_version=browser.chrome_version,
                     force_regen=True,
                 )
 
+        self._save_config()
         return browser
 
     async def delete_browser(self, browser_id: str):
@@ -76,6 +126,7 @@ class BrowserManager:
         if not browser:
             raise KeyError(f"Browser {browser_id} not found")
         await browser.close()
+        self._save_config()
 
     async def launch_browser(self, browser_id: str):
         browser = self.get_browser(browser_id)
@@ -163,3 +214,4 @@ class BrowserManager:
 
 
 browser_manager = BrowserManager()
+

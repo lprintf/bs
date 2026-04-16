@@ -10,10 +10,10 @@ import httpx
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Create a default browser with a tab on startup
-    browser = await browser_manager.create_browser(browser_id="b1")
-    tab = await browser.create_tab(url="https://www.google.com")
-    print(f"Default browser ready: {browser.browser_id}, tab: {tab.tab_id}")
+    # Load persisted browser configs (all start as closed)
+    browser_manager.load_config()
+    count = len(browser_manager.browsers)
+    print(f"Loaded {count} browser(s) from config")
     yield
     await browser_manager.shutdown()
 
