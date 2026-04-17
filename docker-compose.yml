@@ -38,6 +38,8 @@ services:
       - sfu
       - postgres
     shm_size: '2gb'
+    security_opt:
+      - seccomp=unconfined  # Chrome sandbox 需要 namespace 操作
     volumes:
       - ./tabshare:/app
       - ./tabshare/data:/data

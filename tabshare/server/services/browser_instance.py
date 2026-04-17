@@ -20,7 +20,6 @@ BASE_ARGS = [
     "--use-angle=swiftshader-webgl",  # 软件渲染 WebGL，无需 GPU
     "--disable-blink-features=AutomationControlled",
     "--disable-features=WebRtcHideLocalIpsWithMdns",
-    "--no-sandbox",
     "--disable-dev-shm-usage",
     "--use-fake-ui-for-media-stream",
     "--auto-select-desktop-capture-source=Entire screen",
@@ -166,6 +165,7 @@ class BrowserInstance:
             launch_kwargs = {
                 "user_data_dir": str(profile_dir),
                 "headless": True,  # rebrowser-playwright 自动处理 UA/sec-ch-ua 一致性
+                "chromium_sandbox": True,
                 "args": launch_args,
                 "ignore_default_args": ["--enable-automation"],
                 "user_agent": self.fingerprint.user_agent,
