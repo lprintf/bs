@@ -1,4 +1,5 @@
 import asyncio
+import httpx
 from rebrowser_playwright.async_api import Page
 
 class TabPublisher:
@@ -7,14 +8,22 @@ class TabPublisher:
     it to the pion SFU using native WebRTC. Sends navigation events to
     viewers via tab_manager broadcast.
     """
-    def __init__(self, page: Page, tab_id: str):
+    def __init__(self, page: Page, room_name: str):
         self.page = page
-        self.tab_id = tab_id
+        self.tab_id = room_name  # room_name = "{browser_id}_{tab_id}"
         self._closed = False
         self._nav_task: asyncio.Task | None = None
 
+    @property
+    def _browser_id(self) -> int:
+        return int(self.tab_id.split('_')[0])
+
+    @property
+    def _tab_id(self) -> int:
+        return int(self.tab_id.split('_')[1])
+
     async def start(self):
-        print(f"TabPublisher[{self.tab_id[-8:]}]: starting...")
+        print(f"TabPublisher[{self.tab_id}]: starting...")
         self.page.on("framenavigated", self._on_navigated)
         # 初次尝试，如果失败则后台持续重试
         if not await self._ensure_stream():
@@ -27,15 +36,15 @@ class TabPublisher:
             await asyncio.sleep(delay)
             if self._closed:
                 return
-            print(f"TabPublisher[{self.tab_id[-8:]}]: retry publish...")
+            print(f"TabPublisher[{self.tab_id}]: retry publish...")
             if await self._ensure_stream():
-                print(f"TabPublisher[{self.tab_id[-8:]}]: retry succeeded")
+                print(f"TabPublisher[{self.tab_id}]: retry succeeded")
                 return
             delay = min(delay + 2, 15)  # 逐步增大间隔，最大 15s
 
     def _on_navigated(self, frame):
         if frame == self.page.main_frame:
-            print(f"TabPublisher[{self.tab_id[-8:]}]: page navigated")
+            print(f"TabPublisher[{self.tab_id}]: page navigated")
             if self._nav_task and not self._nav_task.done():
                 self._nav_task.cancel()
             self._nav_task = asyncio.ensure_future(self._handle_navigation())
@@ -51,18 +60,35 @@ class TabPublisher:
         for attempt in range(3):
             if self._closed:
                 return
-            print(f"TabPublisher[{self.tab_id[-8:]}]: re-establish attempt {attempt + 1}/3")
+            print(f"TabPublisher[{self.tab_id}]: re-establish attempt {attempt + 1}/3")
             if await self._ensure_stream():
-                print(f"TabPublisher[{self.tab_id[-8:]}]: stream published successfully")
+                print(f"TabPublisher[{self.tab_id}]: stream published successfully")
                 await self._broadcast({"type": "nav_done", "url": self.page.url})
+                # Request keyframe from SFU so viewers see new page immediately
+                await self._request_pli()
                 return
             await asyncio.sleep(1)
-        print(f"TabPublisher[{self.tab_id[-8:]}]: failed to re-establish after 3 attempts")
+        print(f"TabPublisher[{self.tab_id}]: failed to re-establish after 3 attempts")
+
+    async def _request_pli(self):
+        """Ask SFU to send PLI to publisher for immediate keyframe."""
+        try:
+            async with httpx.AsyncClient() as client:
+                # Use a dummy subscriber switch trick won't work; just re-publish triggers keyframe.
+                # Send a direct PLI request - we'll add a /pli endpoint to SFU
+                resp = await client.post(
+                    f"http://127.0.0.1:8088/pli?room={self.tab_id}",
+                    timeout=3.0,
+                )
+                if resp.status_code == 200:
+                    print(f"TabPublisher[{self.tab_id}]: PLI requested")
+        except Exception as e:
+            print(f"TabPublisher[{self.tab_id}]: PLI request failed: {e}")
 
     async def _broadcast(self, event: dict):
         """Send event to all viewers of this tab."""
         from server.services.browser_manager import browser_manager
-        await browser_manager.broadcast_to_viewers(self.tab_id, event)
+        await browser_manager.broadcast_to_viewers(self._browser_id, self._tab_id, event)
 
     async def _ensure_stream(self) -> bool:
         try:
@@ -116,7 +142,7 @@ class TabPublisher:
             }""")
 
             if not offer_sdp or offer_sdp.startswith("ERROR:"):
-                print(f"TabPublisher[{self.tab_id[-8:]}]: getDisplayMedia failed: {offer_sdp}")
+                print(f"TabPublisher[{self.tab_id}]: getDisplayMedia failed: {offer_sdp}")
                 return False
 
             # Step 2: Python 端直接请求 SFU（完全绕过浏览器代理）
@@ -129,7 +155,7 @@ class TabPublisher:
                     timeout=10.0,
                 )
             if resp.status_code != 200:
-                print(f"TabPublisher[{self.tab_id[-8:]}]: SFU returned {resp.status_code}: {resp.text}")
+                print(f"TabPublisher[{self.tab_id}]: SFU returned {resp.status_code}: {resp.text}")
                 return False
 
             answer = resp.json()
@@ -156,20 +182,20 @@ class TabPublisher:
             }""", answer)
 
             if result == "ready":
-                print(f"TabPublisher[{self.tab_id[-8:]}]: stream published to SFU")
+                print(f"TabPublisher[{self.tab_id}]: stream published to SFU")
                 return True
             else:
-                print(f"TabPublisher[{self.tab_id[-8:]}]: setRemoteDescription failed: {result}")
+                print(f"TabPublisher[{self.tab_id}]: setRemoteDescription failed: {result}")
                 return False
         except Exception as e:
-            print(f"TabPublisher[{self.tab_id[-8:]}]: publish eval failed: {e}")
+            print(f"TabPublisher[{self.tab_id}]: publish eval failed: {e}")
             return False
 
     async def refresh_stream(self):
         """Force re-capture stream (e.g. after viewport resize)."""
         if self._closed:
             return
-        print(f"TabPublisher[{self.tab_id[-8:]}]: refreshing stream (viewport changed)")
+        print(f"TabPublisher[{self.tab_id}]: refreshing stream (viewport changed)")
         try:
             await self.page.evaluate("""() => {
                 if (window._webrtc) {

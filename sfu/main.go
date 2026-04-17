@@ -108,6 +108,7 @@ func main() {
 	// --- HTTP signaling ---
 	http.HandleFunc("/offer", handleOffer)
 	http.HandleFunc("/switch", handleSwitch)
+	http.HandleFunc("/pli", handlePLI)
 	http.HandleFunc("/recording", handleRecording)
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("ok"))
@@ -395,6 +396,20 @@ func sendPLI(room *Room) {
 			})
 		}
 	}
+}
+
+// handlePLI handles POST /pli?room=xxx — forces a keyframe request to the publisher.
+func handlePLI(w http.ResponseWriter, r *http.Request) {
+	roomName := r.URL.Query().Get("room")
+	if roomName == "" {
+		http.Error(w, "missing room param", http.StatusBadRequest)
+		return
+	}
+	room := getRoom(roomName)
+	sendPLI(room)
+	log.Printf("[pli] keyframe requested for room %s", roomName)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "room": roomName})
 }
 
 // cleanupSub removes a subscriber from its room and global registry.
