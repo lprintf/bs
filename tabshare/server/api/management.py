@@ -14,19 +14,19 @@ router = APIRouter(prefix="/api/admin", tags=["Management"])
 # ── Request Models ──
 
 class CreateBrowserRequest(BaseModel):
-    browser_id: Optional[str] = None
+    name: str = ""
     proxy: Optional[str] = None
     user_data_dir: Optional[str] = None
-    locale: Optional[str] = None       # e.g. "en-US", "en-US"
-    timezone: Optional[str] = None     # e.g. "America/Los_Angeles"
-    chrome_version: Optional[str] = None  # e.g. "146.0.7680.177", None=真实版本
+    locale: Optional[str] = None
+    timezone: Optional[str] = None
+    chrome_version: Optional[str] = None
     auto_start: bool = True
 
 
 class UpdateBrowserRequest(BaseModel):
+    name: Optional[str] = None
     proxy: Optional[str] = None
-    user_data_dir: Optional[str] = None
-    chrome_version: Optional[str] = None  # 修改版本号，会重新生成指纹
+    chrome_version: Optional[str] = None
 
 
 class CreateTabRequest(BaseModel):
@@ -78,7 +78,7 @@ async def list_browsers():
 async def create_browser(req: CreateBrowserRequest):
     try:
         browser = await browser_manager.create_browser(
-            browser_id=req.browser_id,
+            name=req.name,
             proxy=req.proxy,
             user_data_dir=req.user_data_dir,
             locale=req.locale,
@@ -94,7 +94,7 @@ async def create_browser(req: CreateBrowserRequest):
 
 
 @router.get("/browsers/{browser_id}")
-async def get_browser(browser_id: str):
+async def get_browser(browser_id: int):
     browser = browser_manager.get_browser(browser_id)
     if not browser:
         raise HTTPException(status_code=404, detail=f"Browser {browser_id} not found")
@@ -102,10 +102,9 @@ async def get_browser(browser_id: str):
 
 
 @router.put("/browsers/{browser_id}")
-async def update_browser(browser_id: str, req: UpdateBrowserRequest):
+async def update_browser(browser_id: int, req: UpdateBrowserRequest):
     try:
         updates = req.model_dump(exclude_unset=True)
-        # Treat empty string proxy as None (remove proxy)
         if "proxy" in updates and (updates["proxy"] is None or updates["proxy"] == ""):
             updates["proxy"] = None
         browser = await browser_manager.update_browser(browser_id, updates)
@@ -117,7 +116,7 @@ async def update_browser(browser_id: str, req: UpdateBrowserRequest):
 
 
 @router.delete("/browsers/{browser_id}")
-async def delete_browser(browser_id: str):
+async def delete_browser(browser_id: int):
     try:
         await browser_manager.delete_browser(browser_id)
         return {"message": f"Browser {browser_id} deleted"}
@@ -128,7 +127,7 @@ async def delete_browser(browser_id: str):
 
 
 @router.post("/browsers/{browser_id}/launch")
-async def launch_browser(browser_id: str):
+async def launch_browser(browser_id: int):
     try:
         await browser_manager.launch_browser(browser_id)
         browser = browser_manager.get_browser(browser_id)
@@ -140,7 +139,7 @@ async def launch_browser(browser_id: str):
 
 
 @router.post("/browsers/{browser_id}/close")
-async def close_browser(browser_id: str):
+async def close_browser(browser_id: int):
     try:
         await browser_manager.close_browser(browser_id)
         browser = browser_manager.get_browser(browser_id)
@@ -154,7 +153,7 @@ async def close_browser(browser_id: str):
 # ── Tab CRUD ──
 
 @router.get("/browsers/{browser_id}/tabs")
-async def list_tabs(browser_id: str):
+async def list_tabs(browser_id: int):
     browser = browser_manager.get_browser(browser_id)
     if not browser:
         raise HTTPException(status_code=404, detail=f"Browser {browser_id} not found")
@@ -166,7 +165,7 @@ async def list_tabs(browser_id: str):
 
 
 @router.post("/browsers/{browser_id}/tabs")
-async def create_tab(browser_id: str, req: CreateTabRequest):
+async def create_tab(browser_id: int, req: CreateTabRequest):
     browser = browser_manager.get_browser(browser_id)
     if not browser:
         raise HTTPException(status_code=404, detail=f"Browser {browser_id} not found")
@@ -179,7 +178,7 @@ async def create_tab(browser_id: str, req: CreateTabRequest):
 
 
 @router.delete("/browsers/{browser_id}/tabs/{tab_id}")
-async def delete_tab(browser_id: str, tab_id: str):
+async def delete_tab(browser_id: int, tab_id: int):
     browser = browser_manager.get_browser(browser_id)
     if not browser:
         raise HTTPException(status_code=404, detail=f"Browser {browser_id} not found")
@@ -190,7 +189,7 @@ async def delete_tab(browser_id: str, tab_id: str):
 
 
 @router.post("/browsers/{browser_id}/tabs/{tab_id}/navigate")
-async def navigate_tab(browser_id: str, tab_id: str, req: NavigateRequest):
+async def navigate_tab(browser_id: int, tab_id: int, req: NavigateRequest):
     browser = browser_manager.get_browser(browser_id)
     if not browser:
         raise HTTPException(status_code=404, detail=f"Browser {browser_id} not found")
@@ -204,7 +203,7 @@ async def navigate_tab(browser_id: str, tab_id: str, req: NavigateRequest):
 
 
 @router.post("/browsers/{browser_id}/tabs/{tab_id}/viewport")
-async def set_viewport(browser_id: str, tab_id: str, req: ViewportRequest):
+async def set_viewport(browser_id: int, tab_id: int, req: ViewportRequest):
     browser = browser_manager.get_browser(browser_id)
     if not browser:
         raise HTTPException(status_code=404, detail=f"Browser {browser_id} not found")
@@ -218,7 +217,7 @@ async def set_viewport(browser_id: str, tab_id: str, req: ViewportRequest):
 
 
 @router.post("/browsers/{browser_id}/tabs/{tab_id}/back")
-async def go_back(browser_id: str, tab_id: str):
+async def go_back(browser_id: int, tab_id: int):
     browser = browser_manager.get_browser(browser_id)
     if not browser:
         raise HTTPException(status_code=404, detail=f"Browser {browser_id} not found")
@@ -232,7 +231,7 @@ async def go_back(browser_id: str, tab_id: str):
 
 
 @router.post("/browsers/{browser_id}/tabs/{tab_id}/forward")
-async def go_forward(browser_id: str, tab_id: str):
+async def go_forward(browser_id: int, tab_id: int):
     browser = browser_manager.get_browser(browser_id)
     if not browser:
         raise HTTPException(status_code=404, detail=f"Browser {browser_id} not found")
@@ -254,7 +253,7 @@ async def list_viewers():
             for i, ws in enumerate(tab.viewers):
                 client = ws.client
                 viewers.append({
-                    "id": f"{tab.tab_id}_v{i}",
+                    "id": f"{tab.browser_id}_{tab.tab_id}_v{i}",
                     "tab_id": tab.tab_id,
                     "browser_id": tab.browser_id,
                     "client_host": client.host if client else "unknown",
@@ -263,12 +262,12 @@ async def list_viewers():
     return {"viewers": viewers, "total": len(viewers)}
 
 
-@router.delete("/viewers/{tab_id}/{viewer_index}")
-async def kick_viewer(tab_id: str, viewer_index: int):
+@router.delete("/viewers/{browser_id}/{tab_id}/{viewer_index}")
+async def kick_viewer(browser_id: int, tab_id: int, viewer_index: int):
     """Disconnect a specific viewer."""
-    tab = browser_manager.find_tab(tab_id)
+    tab = browser_manager.find_tab(browser_id, tab_id)
     if not tab:
-        raise HTTPException(status_code=404, detail=f"Tab {tab_id} not found")
+        raise HTTPException(status_code=404, detail="Tab not found")
     if viewer_index < 0 or viewer_index >= len(tab.viewers):
         raise HTTPException(status_code=404, detail="Viewer not found")
     ws = tab.viewers[viewer_index]
@@ -276,7 +275,7 @@ async def kick_viewer(tab_id: str, viewer_index: int):
         await ws.close()
     except Exception:
         pass
-    browser_manager.remove_viewer(tab_id, ws)
+    browser_manager.remove_viewer(browser_id, tab_id, ws)
     return {"success": True}
 
 
@@ -284,8 +283,8 @@ async def kick_viewer(tab_id: str, viewer_index: int):
 
 @router.post("/browsers/{browser_id}/tabs/{tab_id}/upload")
 async def upload_file(
-    browser_id: str,
-    tab_id: str,
+    browser_id: int,
+    tab_id: int,
     file: UploadFile = File(...),
     set_input: str | None = None,
 ):
@@ -298,7 +297,8 @@ async def upload_file(
         raise HTTPException(status_code=404, detail=f"Tab {tab_id} not found")
 
     # Save file
-    tab_dir = UPLOADS_DIR / tab_id
+    room_name = f"{browser_id}_{tab_id}"
+    tab_dir = UPLOADS_DIR / room_name
     tab_dir.mkdir(parents=True, exist_ok=True)
     save_path = tab_dir / file.filename
     content = await file.read()
@@ -316,7 +316,6 @@ async def upload_file(
         except Exception as e:
             result["inject_error"] = str(e)
             tab.pending_filechooser = None
-    # Fallback: inject into a <input type="file"> via CSS selector
     elif set_input:
         try:
             await tab.page.set_input_files(set_input, str(save_path))
@@ -329,7 +328,7 @@ async def upload_file(
 
 
 @router.get("/browsers/{browser_id}/tabs/{tab_id}/downloads")
-async def list_downloads(browser_id: str, tab_id: str):
+async def list_downloads(browser_id: int, tab_id: int):
     """List files downloaded by the remote browser tab."""
     browser = browser_manager.get_browser(browser_id)
     if not browser:

@@ -14,7 +14,7 @@ RUN apt-get update \
 WORKDIR /app
 
 COPY pyproject.toml /app/
-RUN uv pip install --system fastapi uvicorn rebrowser-playwright pydantic httpx websockets python-multipart python-geoip-geolite2
+RUN uv pip install --system fastapi uvicorn rebrowser-playwright pydantic httpx websockets python-multipart python-geoip-geolite2 "sqlalchemy[asyncio]" asyncpg
 
 EXPOSE 8085
 

@@ -3,68 +3,43 @@ BrowserManager — Global singleton managing all BrowserInstances.
 Provides tab-level lookups and viewer broadcast for the WS/SFU layer.
 """
 import json
-import os
-from pathlib import Path
 from typing import Optional
+from sqlalchemy import select
 from server.services.browser_instance import BrowserInstance, TabInfo
+from server.services.database import async_session, BrowserModel
 from server.config import BROWSER_DATA_DIR
-
-CONFIG_PATH = os.getenv("BROWSER_CONFIG_PATH", "/data/browsers.json")
 
 
 class BrowserManager:
     def __init__(self):
-        self.browsers: dict[str, BrowserInstance] = {}
-        self._id_counter = 0
+        self.browsers: dict[int, BrowserInstance] = {}
 
     # ── Persistence ──
 
-    def _save_config(self):
-        """Save all browser configs to disk."""
-        configs = []
-        for b in self.browsers.values():
-            configs.append({
-                "browser_id": b.browser_id,
-                "proxy": b.proxy,
-                "user_data_dir": b.user_data_dir,
-                "chrome_version": b.chrome_version,
-            })
-        Path(CONFIG_PATH).parent.mkdir(parents=True, exist_ok=True)
-        with open(CONFIG_PATH, "w") as f:
-            json.dump(configs, f, indent=2)
+    async def load_from_db(self):
+        """Load browser configs from DB (all start as closed, no tabs)."""
+        async with async_session() as session:
+            result = await session.execute(select(BrowserModel).order_by(BrowserModel.id))
+            rows = result.scalars().all()
 
-    def load_config(self):
-        """Load browser configs from disk (all start as closed, no tabs)."""
-        if not os.path.exists(CONFIG_PATH):
-            return
-        try:
-            with open(CONFIG_PATH) as f:
-                configs = json.load(f)
-        except Exception as e:
-            print(f"[browser_manager] failed to load config: {e}")
-            return
-
-        for cfg in configs:
-            bid = cfg.get("browser_id", "")
-            if not bid or bid in self.browsers:
+        for row in rows:
+            if row.id in self.browsers:
                 continue
             browser = BrowserInstance(
-                browser_id=bid,
-                proxy=cfg.get("proxy"),
-                user_data_dir=cfg.get("user_data_dir"),
-                chrome_version=cfg.get("chrome_version"),
+                browser_id=row.id,
+                name=row.name or "",
+                proxy=row.proxy,
+                user_data_dir=row.user_data_dir or f"{BROWSER_DATA_DIR}/{row.id}",
+                chrome_version=row.chrome_version,
             )
-            self.browsers[bid] = browser
-            # Track highest ID for auto-increment
-            if bid.startswith("b") and bid[1:].isdigit():
-                self._id_counter = max(self._id_counter, int(bid[1:]))
-            print(f"[browser_manager] loaded {bid} (closed)")
+            self.browsers[row.id] = browser
+            print(f"[browser_manager] loaded browser {row.id} '{row.name}' (closed)")
 
     # ── Browser CRUD ──
 
     async def create_browser(
         self,
-        browser_id: Optional[str] = None,
+        name: str = "",
         proxy: Optional[str] = None,
         user_data_dir: Optional[str] = None,
         locale: Optional[str] = None,
@@ -72,109 +47,138 @@ class BrowserManager:
         chrome_version: Optional[str] = None,
         auto_start: bool = True,
     ) -> BrowserInstance:
-        if not browser_id:
-            self._id_counter += 1
-            browser_id = f"b{self._id_counter}"
+        # Insert into DB to get auto-increment ID
+        db_row = BrowserModel(
+            name=name,
+            proxy=proxy,
+            chrome_version=chrome_version,
+        )
+        async with async_session() as session:
+            session.add(db_row)
+            await session.commit()
+            await session.refresh(db_row)
 
-        if browser_id in self.browsers:
-            raise ValueError(f"Browser {browser_id} already exists")
+        # Set user_data_dir after we have the ID
+        data_dir = user_data_dir or f"{BROWSER_DATA_DIR}/{db_row.id}"
+        db_row.user_data_dir = data_dir
+        async with async_session() as session:
+            await session.merge(db_row)
+            await session.commit()
 
         browser = BrowserInstance(
-            browser_id=browser_id,
+            browser_id=db_row.id,
+            name=name,
             proxy=proxy,
-            user_data_dir=user_data_dir,
+            user_data_dir=data_dir,
             locale=locale,
             timezone=timezone,
             chrome_version=chrome_version,
         )
-        self.browsers[browser_id] = browser
-        self._save_config()
+        self.browsers[db_row.id] = browser
 
         if auto_start:
             await browser.launch()
 
         return browser
 
-    async def update_browser(self, browser_id: str, updates: dict) -> BrowserInstance:
+    async def update_browser(self, browser_id: int, updates: dict) -> BrowserInstance:
         browser = self.get_browser(browser_id)
         if not browser:
             raise KeyError(f"Browser {browser_id} not found")
 
+        if "name" in updates:
+            browser.name = updates["name"]
         if "proxy" in updates:
             browser.proxy = updates["proxy"]
-        if "user_data_dir" in updates:
-            browser.user_data_dir = updates["user_data_dir"]
         if "chrome_version" in updates:
             old_ver = browser.chrome_version
             browser.chrome_version = updates["chrome_version"] or None
-            # 版本变更时重新生成指纹
             if browser.chrome_version != old_ver:
                 from server.services.fingerprint import load_or_create_fingerprint
-                from pathlib import Path as P
-                browser_dir = P(browser.user_data_dir)
+                from pathlib import Path
+                browser_dir = Path(browser.user_data_dir)
                 browser.fingerprint = load_or_create_fingerprint(
-                    browser_dir, browser_id,
+                    browser_dir, str(browser_id),
                     chrome_version=browser.chrome_version,
                     force_regen=True,
                 )
 
-        self._save_config()
+        # Persist to DB
+        async with async_session() as session:
+            result = await session.execute(
+                select(BrowserModel).where(BrowserModel.id == browser_id)
+            )
+            row = result.scalar_one_or_none()
+            if row:
+                row.name = browser.name
+                row.proxy = browser.proxy
+                row.chrome_version = browser.chrome_version
+                await session.commit()
+
         return browser
 
-    async def delete_browser(self, browser_id: str):
+    async def delete_browser(self, browser_id: int):
         browser = self.browsers.pop(browser_id, None)
         if not browser:
             raise KeyError(f"Browser {browser_id} not found")
         await browser.close()
-        self._save_config()
 
-    async def launch_browser(self, browser_id: str):
+        async with async_session() as session:
+            result = await session.execute(
+                select(BrowserModel).where(BrowserModel.id == browser_id)
+            )
+            row = result.scalar_one_or_none()
+            if row:
+                await session.delete(row)
+                await session.commit()
+
+    async def launch_browser(self, browser_id: int):
         browser = self.get_browser(browser_id)
         if not browser:
             raise KeyError(f"Browser {browser_id} not found")
         await browser.launch()
 
-    async def close_browser(self, browser_id: str):
+    async def close_browser(self, browser_id: int):
         browser = self.get_browser(browser_id)
         if not browser:
             raise KeyError(f"Browser {browser_id} not found")
         await browser.close()
 
-    def get_browser(self, browser_id: str) -> Optional[BrowserInstance]:
+    def get_browser(self, browser_id: int) -> Optional[BrowserInstance]:
         return self.browsers.get(browser_id)
 
     # ── Tab-level lookups (cross-browser) ──
 
-    def find_tab(self, tab_id: str) -> Optional[TabInfo]:
-        """Find a tab across all browsers."""
-        for browser in self.browsers.values():
-            if tab_id in browser.tabs:
-                return browser.tabs[tab_id]
+    def find_tab(self, browser_id: int, tab_id: int) -> Optional[TabInfo]:
+        """Find a tab by browser_id and tab_id."""
+        browser = self.browsers.get(browser_id)
+        if browser:
+            return browser.tabs.get(tab_id)
         return None
 
-    def get_tab_page(self, tab_id: str):
+    def get_tab_page(self, browser_id: int, tab_id: int):
         """Get the Playwright Page for a tab."""
-        tab = self.find_tab(tab_id)
+        tab = self.find_tab(browser_id, tab_id)
         return tab.page if tab else None
 
     # ── Viewer management ──
 
-    def add_viewer(self, tab_id: str, ws):
-        tab = self.find_tab(tab_id)
+    def add_viewer(self, browser_id: int, tab_id: int, ws):
+        tab = self.find_tab(browser_id, tab_id)
         if tab:
             tab.viewers.append(ws)
 
-    def remove_viewer(self, tab_id: str, ws):
-        tab = self.find_tab(tab_id)
+    def remove_viewer(self, browser_id: int, tab_id: int, ws):
+        tab = self.find_tab(browser_id, tab_id)
         if tab:
             try:
                 tab.viewers.remove(ws)
             except ValueError:
                 pass
 
-    async def broadcast_to_viewers(self, tab_id: str, event: dict):
+    async def broadcast_to_viewers(self, browser_id: int, tab_id: int, event: dict):
         """Push an event to all viewers of a tab."""
-        tab = self.find_tab(tab_id)
+        tab = self.find_tab(browser_id, tab_id)
         if not tab:
             return
         msg = json.dumps(event)
@@ -214,4 +218,3 @@ class BrowserManager:
 
 
 browser_manager = BrowserManager()
-

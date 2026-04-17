@@ -3,6 +3,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from server.services.browser_manager import browser_manager
+from server.services.database import init_db
 from server.api import ws, management
 from server.config import SFU_URL
 from contextlib import asynccontextmanager
@@ -10,10 +11,12 @@ import httpx
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Initialize database tables
+    await init_db()
     # Load persisted browser configs (all start as closed)
-    browser_manager.load_config()
+    await browser_manager.load_from_db()
     count = len(browser_manager.browsers)
-    print(f"Loaded {count} browser(s) from config")
+    print(f"Loaded {count} browser(s) from database")
     yield
     await browser_manager.shutdown()
 
@@ -37,8 +40,8 @@ async def admin_page():
         return FileResponse(admin_html)
     return HTMLResponse("<h1>Admin page not found</h1>", status_code=404)
 
-@app.get("/viewer/{tab_id}")
-async def viewer(tab_id: str):
+@app.get("/viewer/{browser_id}/{tab_id}")
+async def viewer(browser_id: int, tab_id: int):
     viewer_file = static_dir / "viewer.html"
     if not viewer_file.exists():
         return HTMLResponse("<h1>viewer.html not found</h1>", status_code=404)
@@ -99,12 +102,12 @@ async def sfu_recording_proxy(request: Request):
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=502)
 
-@app.post("/api/eval/{tab_id}")
-async def eval_js(tab_id: str, request: Request):
+@app.post("/api/eval/{browser_id}/{tab_id}")
+async def eval_js(browser_id: int, tab_id: int, request: Request):
     """Debug: evaluate JS in a tab."""
     body = await request.json()
     js = body.get("js", "1+1")
-    tab = browser_manager.find_tab(tab_id)
+    tab = browser_manager.find_tab(browser_id, tab_id)
     if not tab:
         return JSONResponse({"error": "Tab not found"}, status_code=404)
     try:
@@ -117,10 +120,10 @@ async def eval_js(tab_id: str, request: Request):
 # ── File serving ──
 from server.services.browser_instance import DOWNLOADS_DIR
 
-@app.get("/api/files/{tab_id}/{filename}")
-async def serve_download(tab_id: str, filename: str):
+@app.get("/api/files/{room_name}/{filename}")
+async def serve_download(room_name: str, filename: str):
     """Serve a file downloaded by the remote browser."""
-    file_path = DOWNLOADS_DIR / tab_id / filename
+    file_path = DOWNLOADS_DIR / room_name / filename
     if not file_path.exists() or not file_path.is_file():
         return JSONResponse({"error": "File not found"}, status_code=404)
     return FileResponse(

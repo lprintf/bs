@@ -338,16 +338,17 @@
         const navOverlay = document.getElementById('nav-overlay');
         const imeTrap = document.getElementById('ime-trap');
         const tabId = window.location.pathname.split('/').pop();
-        let activeTabId = tabId; // mutable — changes on tab switch
+        const pathParts = window.location.pathname.split('/');
+        // URL: /viewer/{browserId}/{tabId}
+        const browserId = parseInt(pathParts[pathParts.length - 2]);
+        let activeTabId = parseInt(tabId);
+        let activeRoom = `${browserId}_${activeTabId}`;
         const urlInput = document.getElementById('urlInput');
         const tabLabel = document.getElementById('tabLabel');
         const tabBar = document.getElementById('tabBar');
 
-        // Extract browser_id from tab_id: "b1_tab_1" → "b1"
-        const parts = tabId.match(/^(.+)_tab_\d+$/);
-        const browserId = parts ? parts[1] : tabId;
-        tabLabel.textContent = activeTabId;
-        document.title = `TabShare - ${activeTabId}`;
+        tabLabel.textContent = `${browserId}/${activeTabId}`;
+        document.title = `TabShare - ${browserId}/${activeTabId}`;
 
         // ── Toolbar Navigation ──
         async function navApi(path, body) {
@@ -453,7 +454,7 @@
                 const offer = await pc.createOffer();
                 await pc.setLocalDescription(offer);
 
-                const res = await fetch(`/api/sfu/offer?room=${activeTabId}&role=sub`, {
+                const res = await fetch(`/api/sfu/offer?room=${activeRoom}&role=sub`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ sdp: pc.localDescription.sdp })
@@ -481,7 +482,7 @@
 
         function connectWS() {
             const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            ws = new WebSocket(`${protocol}//${location.host}/ws/tab/${activeTabId}`);
+            ws = new WebSocket(`${protocol}//${location.host}/ws/tab/${browserId}/${activeTabId}`);
 
             ws.onopen = () => {
                 setStatus('Waiting for stream…', 'connecting');
@@ -528,7 +529,7 @@
                         if (_popupOverlayTimer) clearTimeout(_popupOverlayTimer);
                         _popupOverlayTimer = null;
                         hideNavOverlay();
-                        if (msg.tab_id) {
+                        if (msg.tab_id >= 0) {
                             loadTabBar();
                             switchTab(msg.tab_id);
                         }
@@ -811,11 +812,11 @@
                 if (cur && cur.url) urlInput.value = cur.url;
                 // Render tab bar
                 tabBar.innerHTML = tabs.map(t => {
-                    const label = t.tab_id.replace(browserId + '_', '');
+                    const label = `tab ${t.tab_id}`;
                     const isActive = t.tab_id === activeTabId;
                     return `<div class="tab-item${isActive ? ' active' : ''}" data-tid="${t.tab_id}">
-                        <span class="tab-title" onclick="switchTab('${t.tab_id}')">${label}</span>
-                        <span class="tab-close" onclick="event.stopPropagation(); closeTab('${t.tab_id}')">×</span>
+                        <span class="tab-title" onclick="switchTab(${t.tab_id})">${label}</span>
+                        <span class="tab-close" onclick="event.stopPropagation(); closeTab(${t.tab_id})">×</span>
                     </div>`;
                 }).join('') + '<div class="tab-new" onclick="createNewTab()" title="New Tab">+</div>';
             } catch(e) {
@@ -827,9 +828,10 @@
             if (newTabId === activeTabId) return;
             const oldTabId = activeTabId;
             activeTabId = newTabId;
-            tabLabel.textContent = activeTabId;
-            document.title = `TabShare - ${activeTabId}`;
-            history.replaceState(null, '', `/viewer/${activeTabId}`);
+            activeRoom = `${browserId}_${activeTabId}`;
+            tabLabel.textContent = `${browserId}/${activeTabId}`;
+            document.title = `TabShare - ${browserId}/${activeTabId}`;
+            history.replaceState(null, '', `/viewer/${browserId}/${activeTabId}`);
 
             // Fast path: if PC is connected and we have a sub_id, use /switch
             if (pc && sfuSubId && pc.iceConnectionState === 'connected') {
@@ -839,11 +841,11 @@
                     if (ws) { ws.onclose = null; ws.close(); }
                     connectWS();
 
-                    const res = await fetch(`/api/sfu/switch?sub_id=${sfuSubId}&room=${activeTabId}`, {
+                    const res = await fetch(`/api/sfu/switch?sub_id=${sfuSubId}&room=${activeRoom}`, {
                         method: 'POST'
                     });
                     if (res.ok) {
-                        console.log('[viewer] fast switch to', activeTabId);
+                        console.log('[viewer] fast switch to', activeRoom);
                         // Video will update automatically via ReplaceTrack
                         return;
                     }

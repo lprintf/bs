@@ -43,7 +43,7 @@ _STEALTH_JS_PATH = Path(__file__).parent / "stealth.js"
 
 class TabInfo:
     """Holds state for a single tab within a browser."""
-    def __init__(self, tab_id: str, browser_id: str, page: Page, publisher: TabPublisher):
+    def __init__(self, tab_id: int, browser_id: int, page: Page, publisher: TabPublisher):
         self.tab_id = tab_id
         self.browser_id = browser_id
         self.page = page
@@ -52,6 +52,11 @@ class TabInfo:
         self.downloads: list[dict] = []  # [{filename, path, size, timestamp}]
         self.pending_filechooser = None  # Playwright FileChooser object
         self.last_input_ws = None  # 最后发送输入的 viewer ws
+
+    @property
+    def room_name(self) -> str:
+        """SFU room name."""
+        return f"{self.browser_id}_{self.tab_id}"
 
     def to_dict(self) -> dict:
         try:
@@ -68,6 +73,7 @@ class TabInfo:
         return {
             "tab_id": self.tab_id,
             "browser_id": self.browser_id,
+            "room": self.room_name,
             "url": url,
             "viewport": vp or DEFAULT_VIEWPORT,
             "viewer_count": len(self.viewers),
@@ -80,7 +86,8 @@ class BrowserInstance:
 
     def __init__(
         self,
-        browser_id: str,
+        browser_id: int,
+        name: str = "",
         proxy: Optional[str] = None,
         user_data_dir: Optional[str] = None,
         locale: Optional[str] = None,
@@ -88,6 +95,7 @@ class BrowserInstance:
         chrome_version: Optional[str] = None,
     ):
         self.browser_id = browser_id
+        self.name = name
         self.proxy = proxy
         self.user_data_dir = user_data_dir or f"{BROWSER_DATA_DIR}/{browser_id}"
         self.locale_override = locale
@@ -97,7 +105,7 @@ class BrowserInstance:
         self.playwright = None
         self.context: Optional[BrowserContext] = None
         self.fingerprint: Optional[Fingerprint] = None
-        self.tabs: dict[str, TabInfo] = {}
+        self.tabs: dict[int, TabInfo] = {}
         self._tab_counter = 0
 
     async def launch(self):
@@ -123,7 +131,7 @@ class BrowserInstance:
         try:
             # 1. 加载/生成指纹
             self.fingerprint = load_or_create_fingerprint(
-                browser_dir, self.browser_id,
+                browser_dir, str(self.browser_id),
                 chrome_version=self.chrome_version,
             )
 
@@ -291,8 +299,9 @@ class BrowserInstance:
         if not self.context or self.status != "idle":
             raise RuntimeError(f"Browser {self.browser_id} not ready ({self.status})")
 
+        tab_id = self._tab_counter
         self._tab_counter += 1
-        tab_id = f"{self.browser_id}_tab_{self._tab_counter}"
+        log_prefix = f"{self.browser_id}/{tab_id}"
 
         page = await self.context.new_page()
 
@@ -305,23 +314,24 @@ class BrowserInstance:
         # Console log forwarding
         page.on("console", lambda msg: (
             None if any(s in msg.text for s in _SUPPRESSED_LOGS)
-            else print(f"[{tab_id}] [{msg.type}]: {msg.text}")
+            else print(f"[{log_prefix}] [{msg.type}]: {msg.text}")
         ))
 
         # Navigate
         try:
             await page.goto(url, timeout=60000, wait_until="domcontentloaded")
         except Exception as e:
-            print(f"[{tab_id}] Navigation warning: {e}")
+            print(f"[{log_prefix}] Navigation warning: {e}")
 
-        # Start publisher
-        publisher = TabPublisher(page, tab_id)
+        # Start publisher — room name is "browserId_tabId"
+        room_name = f"{self.browser_id}_{tab_id}"
+        publisher = TabPublisher(page, room_name)
         tab_info = TabInfo(tab_id, self.browser_id, page, publisher)
         self.tabs[tab_id] = tab_info
         asyncio.create_task(publisher.start())
 
         # Download interception
-        tab_dir = DOWNLOADS_DIR / tab_id
+        tab_dir = DOWNLOADS_DIR / room_name
         tab_dir.mkdir(parents=True, exist_ok=True)
 
         def on_download(download):
@@ -338,7 +348,7 @@ class BrowserInstance:
             self._handle_popup(tab_info, popup)
         ))
 
-        print(f"[Browser {self.browser_id}] Created tab: {tab_id} → {url}")
+        print(f"[Browser {self.browser_id}] Created tab {tab_id} → {url}")
         return tab_info
 
     async def _handle_download(self, tab: TabInfo, download, tab_dir: Path):
@@ -354,26 +364,26 @@ class BrowserInstance:
                 "path": str(save_path),
                 "size": size,
                 "timestamp": time.time(),
-                "download_url": f"/api/files/{tab.tab_id}/{filename}",
+                "download_url": f"/api/files/{tab.room_name}/{filename}",
             }
             tab.downloads.append(entry)
-            print(f"[{tab.tab_id}] Download saved: {filename} ({size} bytes)")
+            print(f"[{tab.room_name}] Download saved: {filename} ({size} bytes)")
             # Notify viewers
             from server.services.browser_manager import browser_manager
-            await browser_manager.broadcast_to_viewers(tab.tab_id, {
+            await browser_manager.broadcast_to_viewers(tab.browser_id, tab.tab_id, {
                 "type": "download_ready",
                 **entry,
             })
         except Exception as e:
-            print(f"[{tab.tab_id}] Download error: {e}")
+            print(f"[{tab.room_name}] Download error: {e}")
 
     async def _handle_filechooser(self, tab: TabInfo, filechooser):
         """Handle file chooser dialog from the remote page."""
         tab.pending_filechooser = filechooser
         is_multi = filechooser.is_multiple()
-        print(f"[{tab.tab_id}] File chooser opened (multiple={is_multi})")
+        print(f"[{tab.room_name}] File chooser opened (multiple={is_multi})")
         from server.services.browser_manager import browser_manager
-        await browser_manager.broadcast_to_viewers(tab.tab_id, {
+        await browser_manager.broadcast_to_viewers(tab.browser_id, tab.tab_id, {
             "type": "filechooser_opened",
             "multiple": is_multi,
         })
@@ -395,24 +405,26 @@ class BrowserInstance:
             except Exception:
                 pass
 
+            tab_id = self._tab_counter
             self._tab_counter += 1
-            tab_id = f"{self.browser_id}_tab_{self._tab_counter}"
+            room_name = f"{self.browser_id}_{tab_id}"
             print(f"[Browser {self.browser_id}] Popup → new tab: {tab_id} ({popup_page.url[:80]})")
 
             # Console forwarding
+            log_prefix = f"{self.browser_id}/{tab_id}"
             popup_page.on("console", lambda msg: (
                 None if any(s in msg.text for s in _SUPPRESSED_LOGS)
-                else print(f"[{tab_id}] [{msg.type}]: {msg.text}")
+                else print(f"[{log_prefix}] [{msg.type}]: {msg.text}")
             ))
 
             # Start publisher
-            publisher = TabPublisher(popup_page, tab_id)
+            publisher = TabPublisher(popup_page, room_name)
             tab_info = TabInfo(tab_id, self.browser_id, popup_page, publisher)
             self.tabs[tab_id] = tab_info
             asyncio.create_task(publisher.start())
 
             # Download interception
-            tab_dir = DOWNLOADS_DIR / tab_id
+            tab_dir = DOWNLOADS_DIR / room_name
             tab_dir.mkdir(parents=True, exist_ok=True)
             popup_page.on("download", lambda dl: asyncio.ensure_future(
                 self._handle_download(tab_info, dl, tab_dir)
@@ -434,6 +446,8 @@ class BrowserInstance:
                     await ws.send_text(json.dumps({
                         "type": "popup_tab_created",
                         "tab_id": tab_id,
+                        "browser_id": self.browser_id,
+                        "room": room_name,
                         "url": popup_page.url,
                     }))
                 except Exception:
@@ -441,14 +455,13 @@ class BrowserInstance:
 
         except Exception as e:
             print(f"[Browser {self.browser_id}] Popup handling error: {e}")
-            # Hide overlay on error
             if ws:
                 try:
-                    await ws.send_text(json.dumps({"type": "popup_tab_created", "tab_id": "", "error": str(e)}))
+                    await ws.send_text(json.dumps({"type": "popup_tab_created", "tab_id": -1, "error": str(e)}))
                 except Exception:
                     pass
 
-    async def close_tab(self, tab_id: str):
+    async def close_tab(self, tab_id: int):
         """Close a specific tab."""
         tab = self.tabs.pop(tab_id, None)
         if not tab:
@@ -458,7 +471,7 @@ class BrowserInstance:
             await tab.page.close()
         print(f"[Browser {self.browser_id}] Closed tab: {tab_id}")
 
-    async def navigate_tab(self, tab_id: str, url: str):
+    async def navigate_tab(self, tab_id: int, url: str):
         """Navigate a tab to a new URL."""
         tab = self.tabs.get(tab_id)
         if not tab:
@@ -466,14 +479,14 @@ class BrowserInstance:
         await tab.page.goto(url, timeout=60000, wait_until="domcontentloaded")
         return {"url": tab.page.url}
 
-    async def set_viewport(self, tab_id: str, width: int, height: int):
+    async def set_viewport(self, tab_id: int, width: int, height: int):
         """Set viewport size for a tab."""
         tab = self.tabs.get(tab_id)
         if not tab:
             raise KeyError(f"Tab {tab_id} not found")
         await tab.page.set_viewport_size({"width": width, "height": height})
 
-    async def go_back(self, tab_id: str):
+    async def go_back(self, tab_id: int):
         """Navigate back in history."""
         tab = self.tabs.get(tab_id)
         if not tab:
@@ -481,7 +494,7 @@ class BrowserInstance:
         await tab.page.go_back(timeout=10000)
         return {"url": tab.page.url}
 
-    async def go_forward(self, tab_id: str):
+    async def go_forward(self, tab_id: int):
         """Navigate forward in history."""
         tab = self.tabs.get(tab_id)
         if not tab:
@@ -524,6 +537,7 @@ class BrowserInstance:
             }
         return {
             "browser_id": self.browser_id,
+            "name": self.name,
             "proxy": self.proxy,
             "user_data_dir": self.user_data_dir,
             "chrome_version": self.chrome_version,

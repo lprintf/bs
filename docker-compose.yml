@@ -1,6 +1,16 @@
 version: '3.8'
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=tabshare
+      - POSTGRES_USER=tabshare
+      - POSTGRES_PASSWORD=tabshare
+
   sfu:
     build:
       context: ./sfu
@@ -9,7 +19,7 @@ services:
     ports:
       - "59055:59055/udp"
       - "59055:59055/tcp"
-      - "8085:8085" # TabShare HTTP (exposed via shared network)
+      - "8085:8085"
     volumes:
       - ./tabshare/data/recordings:/data/recordings
     environment:
@@ -26,14 +36,16 @@ services:
     network_mode: "service:sfu"
     depends_on:
       - sfu
+      - postgres
     shm_size: '2gb'
     volumes:
       - ./tabshare:/app
       - ./tabshare/data:/data
     environment:
       - SFU_INTERNAL_URL=http://127.0.0.1:8088
+      - DATABASE_URL=postgresql+asyncpg://tabshare:tabshare@postgres:5432/tabshare
       - REBROWSER_PATCHES_SOURCE_URL=app.js
       - REBROWSER_PATCHES_UTILITY_WORLD_NAME=util
 
 volumes:
-  tabshare-data:
+  pgdata:

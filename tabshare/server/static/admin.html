@@ -83,6 +83,7 @@
                     <thead>
                         <tr>
                             <th>ID</th>
+                            <th>Name</th>
                             <th>Proxy</th>
                             <th>Status</th>
                             <th>Tabs</th>
@@ -158,8 +159,8 @@
                 <div class="modal-title">Add New Browser</div>
                 <form id="createBrowserForm" onsubmit="createBrowser(event)">
                     <div class="form-group">
-                        <label>Browser ID (optional)</label>
-                        <input type="text" class="form-control" id="newBrowserId" placeholder="Auto (b1, b2, ...)">
+                        <label>Name</label>
+                        <input type="text" class="form-control" id="newBrowserName" placeholder="My Browser">
                     </div>
                     <div class="form-group">
                         <label>Proxy (optional)</label>
@@ -236,6 +237,10 @@
                 <div class="modal-title">Edit Browser</div>
                 <form id="editBrowserForm" onsubmit="updateBrowser(event)">
                     <input type="hidden" id="editBrowserId">
+                    <div class="form-group">
+                        <label>Name</label>
+                        <input type="text" class="form-control" id="editName" placeholder="Browser name">
+                    </div>
                     <div class="form-group">
                         <label>Proxy</label>
                         <input type="text" class="form-control" id="editProxy" placeholder="http://proxy:port (empty to remove)">
@@ -329,19 +334,20 @@
         list.innerHTML = browsers.map(b => `
             <tr>
                 <td><strong>${b.browser_id}</strong></td>
+                <td>${b.name || '<em>unnamed</em>'}</td>
                 <td>${b.proxy ? `<span class="proxy-tag">${b.proxy}</span>` : '<span class="proxy-tag none">none</span>'}</td>
                 <td><span class="status-badge status-${b.status}">${b.status}</span></td>
                 <td>${b.tab_count}</td>
                 <td>${b.total_viewers}</td>
                 <td>
                     ${b.status === 'idle' ? `
-                        <button class="btn btn-primary" onclick="showCreateTabModal('${b.browser_id}')">+ Tab</button>
-                        <button class="btn btn-secondary" onclick="showEditBrowserModal('${b.browser_id}', '${b.proxy || ''}', '${b.chrome_version || ''}')">Edit</button>
-                        <button class="btn btn-warning" onclick="closeBrowser('${b.browser_id}')">Stop</button>
+                        <button class="btn btn-primary" onclick="showCreateTabModal(${b.browser_id})">+ Tab</button>
+                        <button class="btn btn-secondary" onclick="showEditBrowserModal(${b.browser_id}, '${b.name || ''}', '${b.proxy || ''}', '${b.chrome_version || ''}')">Edit</button>
+                        <button class="btn btn-warning" onclick="closeBrowser(${b.browser_id})">Stop</button>
                     ` : b.status === 'closed' || b.status === 'error' ? `
-                        <button class="btn btn-success" onclick="launchBrowser('${b.browser_id}')">Launch</button>
-                        <button class="btn btn-secondary" onclick="showEditBrowserModal('${b.browser_id}', '${b.proxy || ''}', '${b.chrome_version || ''}')">Edit</button>
-                        <button class="btn btn-danger" onclick="deleteBrowser('${b.browser_id}')">Delete</button>
+                        <button class="btn btn-success" onclick="launchBrowser(${b.browser_id})">Launch</button>
+                        <button class="btn btn-secondary" onclick="showEditBrowserModal(${b.browser_id}, '${b.name || ''}', '${b.proxy || ''}', '${b.chrome_version || ''}')">Edit</button>
+                        <button class="btn btn-danger" onclick="deleteBrowser(${b.browser_id})">Delete</button>
                     ` : `<span class="status-badge status-launching">${b.status}...</span>`}
                 </td>
             </tr>
@@ -374,8 +380,8 @@
                 <td><span class="viewport-tag">${vp.width}×${vp.height}</span></td>
                 <td>${t.viewer_count || 0}</td>
                 <td>
-                    <a class="view-btn" href="/viewer/${t.tab_id}" target="_blank">View</a>
-                    <button class="btn btn-danger" onclick="deleteTab('${t.browser_id}','${t.tab_id}')">Close</button>
+                    <a class="view-btn" href="/viewer/${t.browser_id}/${t.tab_id}" target="_blank">View</a>
+                    <button class="btn btn-danger" onclick="deleteTab(${t.browser_id},${t.tab_id})">Close</button>
                 </td>
             </tr>`;
         }).join('');
@@ -385,11 +391,11 @@
     async function createBrowser(e) {
         e.preventDefault();
         const body = {};
-        const id = document.getElementById('newBrowserId').value.trim();
+        const name = document.getElementById('newBrowserName').value.trim();
         const proxy = document.getElementById('newProxy').value.trim();
         const dir = document.getElementById('newDataDir').value.trim();
         const ver = document.getElementById('newChromeVersion').value;
-        if (id) body.browser_id = id;
+        if (name) body.name = name;
         if (proxy) body.proxy = proxy;
         if (dir) body.user_data_dir = dir;
         if (ver) body.chrome_version = ver;
@@ -443,8 +449,9 @@
         } catch(e) { showToast(e.message, 'error'); }
     }
 
-    function showEditBrowserModal(bid, proxy, chromeVersion) {
+    function showEditBrowserModal(bid, name, proxy, chromeVersion) {
         document.getElementById('editBrowserId').value = bid;
+        document.getElementById('editName').value = name;
         document.getElementById('editProxy').value = proxy;
         document.getElementById('editChromeVersion').value = chromeVersion || '';
         showModal('editBrowserModal');
@@ -453,10 +460,12 @@
     async function updateBrowser(e) {
         e.preventDefault();
         const bid = document.getElementById('editBrowserId').value;
+        const name = document.getElementById('editName').value.trim();
         const proxy = document.getElementById('editProxy').value.trim();
         const ver = document.getElementById('editChromeVersion').value;
         try {
             await api('PUT', `/api/admin/browsers/${bid}`, {
+                name: name,
                 proxy: proxy || null,
                 chrome_version: ver || null,
             });
@@ -529,20 +538,20 @@
             <tr>
                 <td><code>${v.client_host}:${v.client_port}</code></td>
                 <td>
-                    <a class="view-btn" href="/viewer/${v.tab_id}" target="_blank">${v.tab_id}</a>
+                    <a class="view-btn" href="/viewer/${v.browser_id}/${v.tab_id}" target="_blank">${v.browser_id}/${v.tab_id}</a>
                 </td>
                 <td>${v.browser_id}</td>
                 <td>
-                    <button class="btn btn-danger" onclick="kickViewer('${v.tab_id}', ${viewerData.filter(x => x.tab_id === v.tab_id).indexOf(v)})">Kick</button>
+                    <button class="btn btn-danger" onclick="kickViewer(${v.browser_id}, ${v.tab_id}, ${viewerData.filter(x => x.tab_id === v.tab_id && x.browser_id === v.browser_id).indexOf(v)})">Kick</button>
                 </td>
             </tr>
         `).join('');
     }
 
-    async function kickViewer(tabId, idx) {
+    async function kickViewer(browserId, tabId, idx) {
         if (!confirm('Disconnect this viewer?')) return;
         try {
-            await api('DELETE', `/api/admin/viewers/${tabId}/${idx}`);
+            await api('DELETE', `/api/admin/viewers/${browserId}/${tabId}/${idx}`);
             showToast('Viewer kicked', 'success');
             refreshViewers();
         } catch(e) { showToast(e.message, 'error'); }

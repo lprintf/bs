@@ -1,23 +1,24 @@
+"""
+WebSocket handler — Relays mouse/keyboard/IME input to Playwright pages.
+Route: /ws/tab/{browser_id}/{tab_id}
+"""
+import json
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from server.services.browser_manager import browser_manager
-import json
 
 router = APIRouter()
 
-@router.websocket("/ws/tab/{tab_id}")
-async def websocket_endpoint(websocket: WebSocket, tab_id: str):
-    await websocket.accept()
-    
-    tab = browser_manager.find_tab(tab_id)
-    if not tab:
-        await websocket.send_json({"error": "Tab not found"})
-        await websocket.close()
+
+@router.websocket("/ws/tab/{browser_id}/{tab_id}")
+async def ws_input(websocket: WebSocket, browser_id: int, tab_id: int):
+    tab = browser_manager.find_tab(browser_id, tab_id)
+    if not tab or tab.page.is_closed():
+        await websocket.close(code=4004, reason="Tab not found")
         return
 
+    await websocket.accept()
+    browser_manager.add_viewer(browser_id, tab_id, websocket)
     page = tab.page
-
-    # Register this viewer for server-push events
-    browser_manager.add_viewer(tab_id, websocket)
 
     try:
         while True:
@@ -68,14 +69,14 @@ async def websocket_endpoint(websocket: WebSocket, tab_id: str):
                     if tab.publisher:
                         await tab.publisher.refresh_stream()
             except Exception as e:
-                print(f"[ws:{tab_id}] input error ({t}): {e}")
+                print(f"[ws:{browser_id}/{tab_id}] input error ({t}): {e}")
                     
     except (WebSocketDisconnect, RuntimeError):
         pass
     except Exception as e:
         print(f"WebSocket Error: {e}")
     finally:
-        browser_manager.remove_viewer(tab_id, websocket)
+        browser_manager.remove_viewer(browser_id, tab_id, websocket)
         try:
             await websocket.close()
         except Exception:
