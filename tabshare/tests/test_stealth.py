@@ -44,7 +44,6 @@ async def main():
         "headless": False,
         "args": [
             "--headless=new",
-            "--no-sandbox",
             "--use-gl=angle",
             "--use-angle=swiftshader-webgl",
             "--disable-blink-features=AutomationControlled",

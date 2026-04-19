@@ -24,7 +24,6 @@ class TabManager:
             "args": [
                 "--headless=new",
                 "--disable-gpu",
-                "--no-sandbox",
                 "--disable-dev-shm-usage",
                 "--use-fake-ui-for-media-stream",
                 "--auto-select-desktop-capture-source=Entire screen",
