@@ -35,7 +35,7 @@ async def main():
         "fonts": ["Arial", "Helvetica", "Times New Roman"],
         "do_not_track": "unset",
     }
-    stealth = STEALTH_JS.replace("{{FINGERPRINT_JSON}}", json.dumps(fp))
+    stealth = f"({STEALTH_JS})({json.dumps(fp)});"
 
     chrome_path = os.environ.get("CHROME_PATH", "")
 

@@ -271,7 +271,8 @@ class BrowserInstance:
         """加载 stealth.js 模板并注入指纹数据"""
         template = _STEALTH_JS_PATH.read_text(encoding="utf-8")
         fp_json = json.dumps(asdict(self.fingerprint), ensure_ascii=False)
-        return template.replace("{{FINGERPRINT_JSON}}", fp_json)
+        # 使用闭包调用机制 (stealth)(FP_JSON);
+        return f"({template})({fp_json});"
 
     @staticmethod
     def _parse_proxy(proxy_url: str) -> dict | None:

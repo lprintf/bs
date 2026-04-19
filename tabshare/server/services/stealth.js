@@ -1,9 +1,8 @@
 /**
  * stealth.js — 反检测注入脚本
- * 通过 Playwright context.add_init_script() 注入
- * {{FINGERPRINT_JSON}} 在 Python 端替换为实际指纹数据
+ * Python 加载代码后通过 `(代码)(FP)` 的闭包执行方式传递指纹变量
  */
-(() => {
+((FP) => {
   'use strict';
 
   // ========== 0. CDP 痕迹隐藏（必须最先执行）==========
@@ -58,7 +57,7 @@
   try { delete window.__playwright; } catch (e) {}
   try { delete window.__pw_manual; } catch (e) {}
 
-  const FP = {{FINGERPRINT_JSON}};
+
 
   // ========== Helper: seeded PRNG (mulberry32) ==========
   function mulberry32(a) {
@@ -549,5 +548,19 @@
     };
   }
 
-  // console.debug('[stealth] Fingerprint applied:', FP.fingerprint_id);
-})();
+  // ========== 20. 自动拒绝 WebAuthn (Security Key) 拦截 ==========
+  // 当网站（如 Google）尝试唤起硬件安全密钥（USB/指纹）时，
+  // Headless Chrome 会弹出一个原生 Modal（有时候不可见），这会导致整个页面被蒙层盖住无法点击。
+  // 通过劫持 navigator.credentials.get 并在它请求 PublicKey 时直接抛出拒绝异常，
+  // 可以模拟用户主动点击了“取消”，从而迫使 Google 释放页面焦点，露出“尝试其他方式”按钮。
+  if (navigator.credentials && navigator.credentials.get) {
+    const origGet = navigator.credentials.get;
+    navigator.credentials.get = markNative(async function get(options) {
+      if (options && options.publicKey) {
+        throw new DOMException("The operation either timed out or was not allowed.", "NotAllowedError");
+      }
+      return origGet.apply(this, arguments);
+    });
+  }
+
+})
