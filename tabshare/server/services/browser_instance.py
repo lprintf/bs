@@ -6,6 +6,7 @@ BrowserInstance — 管理单个 Playwright persistent context（独立指纹/�
 """
 import asyncio
 import json
+import os
 from dataclasses import asdict
 from pathlib import Path
 from typing import Optional
