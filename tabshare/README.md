@@ -24,6 +24,25 @@ docker run -v $PWD:/app --network=host --init --rm --ipc=host tabshare:v1
 
 访问 http://localhost:8085/viewer/tab_1
 
+## 硬件加速构建 (Hardware Acceleration)
+
+对于带有核显的物理机环境，系统提供了专用的加速构建配置，用以启用 VA-API 硬件视频编码 (极大降低推流时的 CPU 占用)。
+
+你可以使用提供的一键启动脚本 `./start.sh`，它会自动执行包含 GPU 驱动镜像的重构建，并挂载 `/dev/dri`：
+
+```bash
+# 通用 CPU 模式 (默认)
+./start.sh cpu
+
+# Intel 核显加速
+./start.sh intel
+
+# AMD 核显加速
+./start.sh amd
+```
+
+该脚本将自动组合 `docker-compose.yml` 和 `docker-compose.gpu.yml`，向容器内传递正确的镜像标签和物理设备权限。
+
 ## 关键 Chrome 启动参数
 
 - `--headless=new` — 新版 headless，支持 getDisplayMedia

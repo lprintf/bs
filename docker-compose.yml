@@ -29,6 +29,7 @@ services:
       - RECORDING_DIR=/data/recordings
 
   tabshare:
+    image: ${TABSHARE_IMAGE:-bs-tabshare:latest}
     build:
       context: ./tabshare
       pull: false

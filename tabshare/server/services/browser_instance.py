@@ -14,10 +14,8 @@ from server.config import CHROME_PATH, BROWSER_DATA_DIR
 from server.services.fingerprint import load_or_create_fingerprint, save_fingerprint, Fingerprint
 from server.services.tab_publisher import TabPublisher
 
-# 反检测启动参数
+# 反检测启动参数基础集合
 BASE_ARGS = [
-    "--use-gl=angle",
-    "--use-angle=swiftshader-webgl",  # 软件渲染 WebGL，无需 GPU
     "--disable-blink-features=AutomationControlled",
     "--disable-features=WebRtcHideLocalIpsWithMdns",
     "--disable-dev-shm-usage",
@@ -157,6 +155,13 @@ class BrowserInstance:
 
             # 3. 构建启动参数
             launch_args = BASE_ARGS.copy()
+            
+            # CPU 模式下强制使用 SwiftShader 软件渲染，否则使用硬件加速
+            if os.environ.get("USE_HARDWARE_GPU", "").lower() != "true":
+                launch_args.extend([
+                    "--use-gl=angle",
+                    "--use-angle=swiftshader-webgl"
+                ])
             launch_args.append(f"--lang={self.fingerprint.locale}")
 
             # 4. launch_persistent_context
