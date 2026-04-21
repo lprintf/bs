@@ -84,6 +84,48 @@ func main() {
 
 	log.Printf("SFU starting: NAT_IP=%s UDP_PORT=%d HTTP_PORT=%d", natIP, udpPort, httpPort)
 
+	// --- MediaEngine: only H.264 (force hardware encoding) ---
+	me := &webrtc.MediaEngine{}
+	for _, codec := range []webrtc.RTPCodecParameters{
+		{
+			RTPCodecCapability: webrtc.RTPCodecCapability{
+				MimeType:    webrtc.MimeTypeH264,
+				ClockRate:   90000,
+				SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f",
+			},
+			PayloadType: 102,
+		},
+		{
+			RTPCodecCapability: webrtc.RTPCodecCapability{
+				MimeType:    webrtc.MimeTypeH264,
+				ClockRate:   90000,
+				SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42001f",
+			},
+			PayloadType: 127,
+		},
+		{
+			RTPCodecCapability: webrtc.RTPCodecCapability{
+				MimeType:    webrtc.MimeTypeH264,
+				ClockRate:   90000,
+				SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f",
+			},
+			PayloadType: 125,
+		},
+		{
+			RTPCodecCapability: webrtc.RTPCodecCapability{
+				MimeType:    webrtc.MimeTypeH264,
+				ClockRate:   90000,
+				SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=640032",
+			},
+			PayloadType: 123,
+		},
+	} {
+		if err := me.RegisterCodec(codec, webrtc.RTPCodecTypeVideo); err != nil {
+			log.Fatalf("Failed to register H.264 codec: %v", err)
+		}
+	}
+	log.Printf("MediaEngine: H.264 only (VP8 disabled)")
+
 	// --- pion SettingEngine ---
 	se := webrtc.SettingEngine{}
 	se.SetLite(true)
@@ -101,7 +143,10 @@ func main() {
 		webrtc.NetworkTypeUDP4,
 	})
 
-	api = webrtc.NewAPI(webrtc.WithSettingEngine(se))
+	api = webrtc.NewAPI(
+		webrtc.WithMediaEngine(me),
+		webrtc.WithSettingEngine(se),
+	)
 
 	log.Printf("ICE Lite enabled, NAT 1:1 → %s, UDP+TCP mux on :%d", natIP, udpPort)
 
@@ -189,7 +234,7 @@ func handlePublisher(room *Room, offer webrtc.SessionDescription) (*webrtc.Sessi
 	room.mu.Lock()
 	if room.videoTrack == nil {
 		vt, vtErr := webrtc.NewTrackLocalStaticRTP(
-			webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8},
+			webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264},
 			"video", "tabshare",
 		)
 		if vtErr != nil {
@@ -231,7 +276,7 @@ func handlePublisher(room *Room, offer webrtc.SessionDescription) (*webrtc.Sessi
 		}()
 
 		// Read RTP, rewrite seq/ts for continuity, forward to local track
-		buf := make([]byte, 4096)
+		buf := make([]byte, 65535)
 		for {
 			n, _, readErr := remoteTrack.Read(buf)
 			if readErr != nil {

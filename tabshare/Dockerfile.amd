@@ -1,0 +1,15 @@
+# 基于通用版 tabshare 镜像，添加 AMD 核显硬件加速支持
+# 构建前需先构建通用版: docker compose build tabshare
+FROM bs-tabshare
+
+USER root
+
+# 安装 AMD Mesa VA-API 驱动 (RADV/RadeonSI)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    mesa-va-drivers \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# 指定 VA-API 驱动
+ENV LIBVA_DRIVER_NAME=radeonsi
+
+USER ubuntu

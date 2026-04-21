@@ -1,0 +1,9 @@
+version: '3.8'
+
+services:
+  tabshare:
+    # 挂载 GPU 设备用于 VAAPI 硬件编码加速
+    devices:
+      - /dev/dri:/dev/dri
+    environment:
+      - USE_HARDWARE_GPU=true  # VAAPI H.264 硬件编码

@@ -25,6 +25,17 @@ BASE_ARGS = [
     "--unsafely-treat-insecure-origin-as-secure=http://127.0.0.1:8088",
 ]
 
+# 硬件加速(VAAPI)参数 — 启用 H.264 硬件编码/解码
+GPU_ACCEL_ARGS = [
+    "--enable-features=VaapiVideoDecoder,VaapiVideoEncoder,VaapiVideoEncodeLinuxGL",
+    "--disable-features=UseChromeOSDirectVideoDecoder",
+    "--enable-accelerated-video-decode",
+    "--use-gl=egl",
+    "--enable-gpu-rasterization",
+    "--enable-zero-copy",
+    "--disable-gpu-sandbox",
+]
+
 _SUPPRESSED_LOGS = ["Failed to execute 'postMessage' on 'DOMWindow'"]
 
 DEFAULT_VIEWPORT = {"width": 1280, "height": 720}
@@ -157,8 +168,11 @@ class BrowserInstance:
             # 3. 构建启动参数
             launch_args = BASE_ARGS.copy()
             
-            # CPU 模式下强制使用 SwiftShader 软件渲染，否则使用硬件加速
-            if os.environ.get("USE_HARDWARE_GPU", "").lower() != "true":
+            # GPU 模式：VAAPI 硬件编码加速；CPU 模式：SwiftShader 软件渲染
+            if os.environ.get("USE_HARDWARE_GPU", "").lower() == "true":
+                launch_args.extend(GPU_ACCEL_ARGS)
+                print(f"[Browser {self.browser_id}] GPU acceleration enabled (VAAPI)")
+            else:
                 launch_args.extend([
                     "--use-gl=angle",
                     "--use-angle=swiftshader-webgl"
