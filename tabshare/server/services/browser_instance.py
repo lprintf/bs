@@ -26,10 +26,10 @@ BASE_ARGS = [
 ]
 
 # 硬件加速(VAAPI)参数 — 启用 H.264 硬件编码/解码
+# 有 Xvfb 虚拟显示时: 不需要 ozone headless, Chrome 走 X11 + EGL 完整 GPU 初始化
+# 无 Xvfb 时: 仅 VAAPI 编码可用, GPU 渲染/WebGL 不可用
 GPU_ACCEL_ARGS = [
-    "--headless=new",
-    "--ozone-platform=headless",
-    "--enable-features=VaapiVideoDecoder,VaapiVideoEncoder,VaapiVideoEncodeLinuxGL,UseOzonePlatform",
+    "--enable-features=VaapiVideoDecoder,VaapiVideoEncoder,VaapiVideoEncodeLinuxGL",
     "--disable-features=UseChromeOSDirectVideoDecoder",
     "--enable-accelerated-video-decode",
     "--use-gl=egl",
@@ -185,15 +185,30 @@ class BrowserInstance:
             # 4. launch_persistent_context
             self.playwright = await async_playwright().start()
 
-            # GPU 模式必须用 headless=False + --headless=new（新 headless 支持 GPU）
-            # 旧的 headless=True 会让 Playwright 注入 --headless=old，完全没有 GPU
+            # 决定 headless 策略:
+            # - GPU + Xvfb (DISPLAY set): 非 headless, 渲染到虚拟显示, 完整 GPU
+            # - GPU 无显示: headless=new + ozone, 仅 VAAPI 编码
+            # - CPU: Playwright 默认 headless
+            has_display = bool(os.environ.get("DISPLAY"))
             ignore_args = ["--enable-automation"]
-            if use_gpu:
+
+            if use_gpu and has_display:
+                # Xvfb 模式: Chrome 渲染到虚拟显示, GPU 渲染+合成+编码全可用
+                use_headless = False
+                print(f"[Browser {self.browser_id}] Xvfb detected (DISPLAY={os.environ['DISPLAY']}), full GPU mode")
+            elif use_gpu:
+                # 无显示: 回退 headless=new, 仅 VAAPI 编码
+                use_headless = False
+                launch_args.extend(["--headless=new", "--ozone-platform=headless"])
+                launch_args.append("--enable-features=UseOzonePlatform")
                 ignore_args.extend(["--headless", "--headless=old"])
+                print(f"[Browser {self.browser_id}] No display, headless GPU mode (VAAPI only)")
+            else:
+                use_headless = True
 
             launch_kwargs = {
                 "user_data_dir": str(profile_dir),
-                "headless": not use_gpu,
+                "headless": use_headless,
                 "chromium_sandbox": True,
                 "args": launch_args,
                 "ignore_default_args": ignore_args,
