@@ -84,47 +84,12 @@ func main() {
 
 	log.Printf("SFU starting: NAT_IP=%s UDP_PORT=%d HTTP_PORT=%d", natIP, udpPort, httpPort)
 
-	// --- MediaEngine: only H.264 (force hardware encoding) ---
+	// --- MediaEngine: register default codecs (H.264 enforced at track level) ---
 	me := &webrtc.MediaEngine{}
-	for _, codec := range []webrtc.RTPCodecParameters{
-		{
-			RTPCodecCapability: webrtc.RTPCodecCapability{
-				MimeType:    webrtc.MimeTypeH264,
-				ClockRate:   90000,
-				SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f",
-			},
-			PayloadType: 102,
-		},
-		{
-			RTPCodecCapability: webrtc.RTPCodecCapability{
-				MimeType:    webrtc.MimeTypeH264,
-				ClockRate:   90000,
-				SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42001f",
-			},
-			PayloadType: 127,
-		},
-		{
-			RTPCodecCapability: webrtc.RTPCodecCapability{
-				MimeType:    webrtc.MimeTypeH264,
-				ClockRate:   90000,
-				SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f",
-			},
-			PayloadType: 125,
-		},
-		{
-			RTPCodecCapability: webrtc.RTPCodecCapability{
-				MimeType:    webrtc.MimeTypeH264,
-				ClockRate:   90000,
-				SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=640032",
-			},
-			PayloadType: 123,
-		},
-	} {
-		if err := me.RegisterCodec(codec, webrtc.RTPCodecTypeVideo); err != nil {
-			log.Fatalf("Failed to register H.264 codec: %v", err)
-		}
+	if err := me.RegisterDefaultCodecs(); err != nil {
+		log.Fatalf("Failed to register default codecs: %v", err)
 	}
-	log.Printf("MediaEngine: H.264 only (VP8 disabled)")
+	log.Printf("MediaEngine: default codecs registered (H.264 enforced at track level)")
 
 	// --- pion SettingEngine ---
 	se := webrtc.SettingEngine{}

@@ -107,12 +107,84 @@ class TabPublisher:
             room = self.tab_id
 
             # Step 1: 在浏览器里获取 getDisplayMedia + createOffer (不涉及网络)
+            # SDP munging: 删除非 H.264 的 video codec，强制 Chrome 使用 H.264 (VAAPI 硬编码)
             offer_sdp = await self.page.evaluate("""async () => {
                 window._webrtc = window._webrtc || {};
 
                 // Close old PC if exists
                 if (window._webrtc.pc) {
                     try { window._webrtc.pc.close(); } catch(e) {}
+                }
+
+                // SDP munging: keep only H.264 video codecs
+                function forceH264(sdp) {
+                    const lines = sdp.split('\\r\\n');
+                    const result = [];
+                    let inVideo = false;
+                    let videoMLine = null;
+                    const h264PTs = new Set();
+                    const removePTs = new Set();
+
+                    // First pass: find H.264 vs non-H.264 payload types
+                    for (const line of lines) {
+                        if (line.startsWith('m=video')) {
+                            inVideo = true;
+                        } else if (line.startsWith('m=') && !line.startsWith('m=video')) {
+                            inVideo = false;
+                        }
+                        if (inVideo) {
+                            const rtpMatch = line.match(/^a=rtpmap:(\\d+)\\s+(.+)/);
+                            if (rtpMatch) {
+                                const pt = rtpMatch[1];
+                                const codec = rtpMatch[2].toLowerCase();
+                                if (codec.startsWith('h264/')) {
+                                    h264PTs.add(pt);
+                                } else {
+                                    removePTs.add(pt);
+                                }
+                            }
+                        }
+                    }
+
+                    // If no H.264 found, return original SDP
+                    if (h264PTs.size === 0) return sdp;
+
+                    // Also find associated apt (RTX) payload types to remove
+                    for (const line of lines) {
+                        const fmtpMatch = line.match(/^a=fmtp:(\\d+)\\s+apt=(\\d+)/);
+                        if (fmtpMatch) {
+                            const pt = fmtpMatch[1];
+                            const apt = fmtpMatch[2];
+                            if (removePTs.has(apt)) {
+                                removePTs.add(pt);
+                            }
+                        }
+                    }
+
+                    // Second pass: filter
+                    inVideo = false;
+                    for (const line of lines) {
+                        if (line.startsWith('m=video')) {
+                            inVideo = true;
+                            // Rewrite m= line to only include H.264 payload types
+                            const parts = line.split(' ');
+                            const filtered = parts.slice(0, 3).concat(
+                                parts.slice(3).filter(pt => !removePTs.has(pt))
+                            );
+                            result.push(filtered.join(' '));
+                            continue;
+                        } else if (line.startsWith('m=') && !line.startsWith('m=video')) {
+                            inVideo = false;
+                        }
+
+                        if (inVideo) {
+                            // Skip lines referencing removed payload types
+                            const ptMatch = line.match(/^a=(?:rtpmap|fmtp|rtcp-fb):(\\d+)/);
+                            if (ptMatch && removePTs.has(ptMatch[1])) continue;
+                        }
+                        result.push(line);
+                    }
+                    return result.join('\\r\\n');
                 }
 
                 try {
@@ -130,7 +202,9 @@ class TabPublisher:
                     stream.getVideoTracks().forEach(t => pc.addTrack(t, stream));
 
                     const offer = await pc.createOffer();
-                    await pc.setLocalDescription(offer);
+                    // Munge SDP to force H.264
+                    const h264Sdp = forceH264(offer.sdp);
+                    await pc.setLocalDescription({type: 'offer', sdp: h264Sdp});
 
                     window._webrtc.stream = stream;
                     window._webrtc.pc = pc;

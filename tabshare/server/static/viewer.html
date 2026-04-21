@@ -101,6 +101,33 @@
             font-size: 11px;
             white-space: nowrap;
         }
+        /* WebRTC Stats */
+        .stats-bar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 11px;
+            white-space: nowrap;
+        }
+        .stat-item {
+            display: flex;
+            align-items: center;
+            gap: 3px;
+        }
+        .stat-label {
+            color: #556;
+        }
+        .stat-value {
+            color: #8f8;
+            font-weight: 600;
+        }
+        .stat-value.warn {
+            color: #fa0;
+        }
+        .stat-value.bad {
+            color: #f55;
+        }
         .admin-link {
             color: #8a8aaa;
             text-decoration: none;
@@ -311,6 +338,14 @@
         <div class="tb-sep"></div>
         <button class="tb-btn sm" onclick="toggleFullscreen()" title="Toggle Fullscreen">⛶ Fullscreen</button>
         <div style="flex:1"></div>
+        <div class="stats-bar" id="statsBar">
+            <span class="stat-item"><span class="stat-label">FPS</span> <span class="stat-value" id="statFps">--</span></span>
+            <span class="stat-item"><span class="stat-label">Bitrate</span> <span class="stat-value" id="statBitrate">--</span></span>
+            <span class="stat-item"><span class="stat-label">Codec</span> <span class="stat-value" id="statCodec">--</span></span>
+            <span class="stat-item"><span class="stat-label">Loss</span> <span class="stat-value" id="statLoss">--</span></span>
+            <span class="stat-item"><span class="stat-label">Jitter</span> <span class="stat-value" id="statJitter">--</span></span>
+        </div>
+        <div class="tb-sep"></div>
         <span id="status" class="status-connecting">Connecting…</span>
         <div class="tb-sep"></div>
         <span class="tb-info" id="vpInfo">--</span>
@@ -801,6 +836,79 @@
             video.requestVideoFrameCallback(onFrame);
         }
         video.addEventListener('playing', startFrameWatch, { once: true });
+
+        // ─── WebRTC Stats Polling ───
+        const statEls = {
+            fps: document.getElementById('statFps'),
+            bitrate: document.getElementById('statBitrate'),
+            codec: document.getElementById('statCodec'),
+            loss: document.getElementById('statLoss'),
+            jitter: document.getElementById('statJitter'),
+        };
+        let prevStats = { bytes: 0, frames: 0, ts: 0, packetsLost: 0, packetsRecv: 0 };
+
+        function classifyFps(fps) { return fps >= 24 ? '' : fps >= 15 ? 'warn' : 'bad'; }
+        function classifyLoss(pct) { return pct <= 1 ? '' : pct <= 5 ? 'warn' : 'bad'; }
+        function classifyJitter(ms) { return ms <= 30 ? '' : ms <= 80 ? 'warn' : 'bad'; }
+
+        async function pollStats() {
+            if (!pc || pc.connectionState !== 'connected') return;
+            try {
+                const stats = await pc.getStats();
+                let codecName = '';
+                const codecMap = {};
+                stats.forEach(report => {
+                    if (report.type === 'codec') {
+                        codecMap[report.id] = report.mimeType?.split('/')[1] || report.mimeType;
+                    }
+                });
+                stats.forEach(report => {
+                    if (report.type === 'inbound-rtp' && report.kind === 'video') {
+                        const now = report.timestamp;
+                        const dt = (now - prevStats.ts) / 1000; // seconds
+                        if (dt > 0 && prevStats.ts > 0) {
+                            // FPS
+                            const dFrames = (report.framesDecoded || 0) - prevStats.frames;
+                            const fps = Math.round(dFrames / dt);
+                            statEls.fps.textContent = fps;
+                            statEls.fps.className = 'stat-value ' + classifyFps(fps);
+
+                            // Bitrate
+                            const dBytes = (report.bytesReceived || 0) - prevStats.bytes;
+                            const kbps = Math.round((dBytes * 8) / (dt * 1000));
+                            statEls.bitrate.textContent = kbps > 1000 ? (kbps/1000).toFixed(1) + ' Mbps' : kbps + ' kbps';
+
+                            // Packet loss
+                            const dLost = (report.packetsLost || 0) - prevStats.packetsLost;
+                            const dRecv = (report.packetsReceived || 0) - prevStats.packetsRecv;
+                            const lossPct = dRecv > 0 ? ((dLost / (dLost + dRecv)) * 100) : 0;
+                            statEls.loss.textContent = lossPct.toFixed(1) + '%';
+                            statEls.loss.className = 'stat-value ' + classifyLoss(lossPct);
+
+                            // Jitter
+                            const jitterMs = Math.round((report.jitter || 0) * 1000);
+                            statEls.jitter.textContent = jitterMs + ' ms';
+                            statEls.jitter.className = 'stat-value ' + classifyJitter(jitterMs);
+                        }
+                        prevStats = {
+                            bytes: report.bytesReceived || 0,
+                            frames: report.framesDecoded || 0,
+                            ts: now,
+                            packetsLost: report.packetsLost || 0,
+                            packetsRecv: report.packetsReceived || 0,
+                        };
+                        // Codec
+                        if (report.codecId && codecMap[report.codecId]) {
+                            codecName = codecMap[report.codecId];
+                        }
+                    }
+                });
+                if (codecName) statEls.codec.textContent = codecName;
+            } catch(e) {
+                console.warn('stats poll error:', e);
+            }
+        }
+        setInterval(pollStats, 1000);
 
         // ─── View Group (Tab Bar) ───
         async function loadTabBar() {
