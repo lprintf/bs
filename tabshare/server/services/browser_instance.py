@@ -32,7 +32,7 @@ GPU_ACCEL_ARGS = [
     "--enable-features=VaapiVideoDecoder,VaapiVideoEncoder,VaapiVideoEncodeLinuxGL",
     "--disable-features=UseChromeOSDirectVideoDecoder",
     "--enable-accelerated-video-decode",
-    "--use-gl=egl",
+    "--use-gl=desktop",
     "--enable-gpu-rasterization",
     "--enable-zero-copy",
     "--disable-gpu-sandbox",
@@ -253,8 +253,16 @@ class BrowserInstance:
                 await self._apply_ua_metadata(page)
 
             # 关闭 persistent context 自带的空白页
-            for page in self.context.pages:
-                if page.url in ("about:blank", "chrome://newtab/"):
+            # 非 headless 模式 (Xvfb GPU) 必须保留至少一个页面，否则 Chrome 退出
+            blank_pages = [p for p in self.context.pages
+                           if p.url in ("about:blank", "chrome://newtab/")]
+            if use_headless:
+                # headless 模式: 安全关闭所有空白页
+                for page in blank_pages:
+                    await page.close()
+            elif len(blank_pages) > 1:
+                # 非 headless: 保留一个空白页作为 keepalive
+                for page in blank_pages[1:]:
                     await page.close()
 
             self.status = "idle"

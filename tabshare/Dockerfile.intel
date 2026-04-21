@@ -17,7 +17,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # 指定 VA-API 驱动
 ENV LIBVA_DRIVER_NAME=iHD
 
+# GPU 启动脚本: 先启 Xvfb 再启应用
+COPY tabshare/entrypoint-gpu.sh /usr/local/bin/entrypoint-gpu.sh
+RUN chmod +x /usr/local/bin/entrypoint-gpu.sh
+
 USER ubuntu
 
-# Xvfb 虚拟显示启动，Chrome 可完整使用 GPU 渲染+编码
-CMD ["xvfb-run", "--server-args=-screen 0 1280x720x24 +extension GLX", "python", "-u", "-m", "server.app"]
+CMD ["/usr/local/bin/entrypoint-gpu.sh"]
+
