@@ -223,9 +223,9 @@ func handlePublisher(room *Room, offer webrtc.SessionDescription) (*webrtc.Sessi
 	pc.OnTrack(func(remoteTrack *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
 		log.Printf("[pub] got track: %s codec=%s", remoteTrack.ID(), remoteTrack.Codec().MimeType)
 
-		// Send periodic PLI to ensure regular keyframes
+		// Send periodic PLI as safety net (main PLI comes on-demand from subscribers)
 		go func() {
-			ticker := time.NewTicker(2 * time.Second)
+			ticker := time.NewTicker(10 * time.Second)
 			defer ticker.Stop()
 			pc.WriteRTCP([]rtcp.Packet{
 				&rtcp.PictureLossIndication{MediaSSRC: uint32(remoteTrack.SSRC())},
@@ -338,13 +338,15 @@ func handleSubscriber(room *Room, roomName string, offer webrtc.SessionDescripti
 	subID := nextSubID()
 	sub := &Subscriber{pc: pc, sender: rtpSender, room: roomName}
 
-	// Read RTCP (PLI, NACK etc.) from viewer
+	// Read RTCP (PLI, NACK etc.) from viewer and forward to publisher
 	go func() {
 		buf := make([]byte, 1500)
 		for {
 			if _, _, rtcpErr := rtpSender.Read(buf); rtcpErr != nil {
 				return
 			}
+			// Forward PLI/NACK to publisher for better encoding adaptation
+			sendPLI(room)
 		}
 	}()
 

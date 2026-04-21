@@ -13,6 +13,7 @@ class TabPublisher:
         self.tab_id = room_name  # room_name = "{browser_id}_{tab_id}"
         self._closed = False
         self._nav_task: asyncio.Task | None = None
+        self._publish_task: asyncio.Task | None = None
 
     @property
     def _browser_id(self) -> int:
@@ -52,6 +53,7 @@ class TabPublisher:
     async def _handle_navigation(self):
         if self._closed:
             return
+        self._cancel_publish()
         # Immediately notify viewers
         await self._broadcast({"type": "nav_start"})
         await asyncio.sleep(0.3)
@@ -190,8 +192,16 @@ class TabPublisher:
                 try {
                     const stream = await navigator.mediaDevices.getDisplayMedia({
                         audio: false,
-                        video: { displaySurface: "browser" },
+                        video: {
+                            displaySurface: "browser",
+                            frameRate: { ideal: 30, max: 30 }
+                        },
                         preferCurrentTab: true
+                    });
+
+                    // 告诉编码器这是屏幕内容（文字/细节优先）
+                    stream.getVideoTracks().forEach(t => {
+                        t.contentHint = 'detail';
                     });
 
                     const pc = new RTCPeerConnection({
@@ -199,7 +209,16 @@ class TabPublisher:
                         iceTransportPolicy: "all"
                     });
 
-                    stream.getVideoTracks().forEach(t => pc.addTrack(t, stream));
+                    stream.getVideoTracks().forEach(t => {
+                        const sender = pc.addTrack(t, stream);
+                        // 限制编码参数，稳定质量
+                        const params = sender.getParameters();
+                        if (params.encodings && params.encodings.length > 0) {
+                            params.encodings[0].maxBitrate = 4000000; // 4 Mbps
+                            params.encodings[0].maxFramerate = 30;
+                            sender.setParameters(params).catch(() => {});
+                        }
+                    });
 
                     const offer = await pc.createOffer();
                     // Munge SDP to force H.264
@@ -265,10 +284,17 @@ class TabPublisher:
             print(f"TabPublisher[{self.tab_id}]: publish eval failed: {e}")
             return False
 
+    def _cancel_publish(self):
+        """取消正在进行的 publish task（防止并发踩踏）"""
+        if self._publish_task and not self._publish_task.done():
+            self._publish_task.cancel()
+            self._publish_task = None
+
     async def refresh_stream(self):
         """Force re-capture stream (e.g. after viewport resize)."""
         if self._closed:
             return
+        self._cancel_publish()
         print(f"TabPublisher[{self.tab_id}]: refreshing stream (viewport changed)")
         try:
             await self.page.evaluate("""() => {
@@ -282,7 +308,7 @@ class TabPublisher:
             }""")
         except Exception:
             pass
-        await self._ensure_stream()
+        self._publish_task = asyncio.ensure_future(self._ensure_stream())
 
     def close(self):
         self._closed = True

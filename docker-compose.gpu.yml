@@ -5,5 +5,9 @@ services:
     # 挂载 GPU 设备用于 VAAPI 硬件编码加速
     devices:
       - /dev/dri:/dev/dri
+    # 加入宿主机 render 组，获得 renderD128 访问权限
+    # 查宿主机 GID: stat -c '%g' /dev/dri/renderD128
+    group_add:
+      - "992"
     environment:
       - USE_HARDWARE_GPU=true  # VAAPI H.264 硬件编码

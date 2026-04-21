@@ -27,7 +27,9 @@ BASE_ARGS = [
 
 # 硬件加速(VAAPI)参数 — 启用 H.264 硬件编码/解码
 GPU_ACCEL_ARGS = [
-    "--enable-features=VaapiVideoDecoder,VaapiVideoEncoder,VaapiVideoEncodeLinuxGL",
+    "--headless=new",
+    "--ozone-platform=headless",
+    "--enable-features=VaapiVideoDecoder,VaapiVideoEncoder,VaapiVideoEncodeLinuxGL,UseOzonePlatform",
     "--disable-features=UseChromeOSDirectVideoDecoder",
     "--enable-accelerated-video-decode",
     "--use-gl=egl",
@@ -167,9 +169,10 @@ class BrowserInstance:
 
             # 3. 构建启动参数
             launch_args = BASE_ARGS.copy()
+            use_gpu = os.environ.get("USE_HARDWARE_GPU", "").lower() == "true"
             
             # GPU 模式：VAAPI 硬件编码加速；CPU 模式：SwiftShader 软件渲染
-            if os.environ.get("USE_HARDWARE_GPU", "").lower() == "true":
+            if use_gpu:
                 launch_args.extend(GPU_ACCEL_ARGS)
                 print(f"[Browser {self.browser_id}] GPU acceleration enabled (VAAPI)")
             else:
@@ -182,12 +185,18 @@ class BrowserInstance:
             # 4. launch_persistent_context
             self.playwright = await async_playwright().start()
 
+            # GPU 模式必须用 headless=False + --headless=new（新 headless 支持 GPU）
+            # 旧的 headless=True 会让 Playwright 注入 --headless=old，完全没有 GPU
+            ignore_args = ["--enable-automation"]
+            if use_gpu:
+                ignore_args.extend(["--headless", "--headless=old"])
+
             launch_kwargs = {
                 "user_data_dir": str(profile_dir),
-                "headless": True,  # rebrowser-playwright 自动处理 UA/sec-ch-ua 一致性
+                "headless": not use_gpu,
                 "chromium_sandbox": True,
                 "args": launch_args,
-                "ignore_default_args": ["--enable-automation"],
+                "ignore_default_args": ignore_args,
                 "user_agent": self.fingerprint.user_agent,
                 "locale": self.fingerprint.locale,
                 "timezone_id": self.fingerprint.timezone,
