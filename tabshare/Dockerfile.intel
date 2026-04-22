@@ -4,16 +4,33 @@ FROM bs-tabshare
 
 USER root
 
-# 安装 Intel iHD 驱动 (VAAPI H.264 硬件编码)
+# 安装:
+# - Intel iHD 驱动 (VAAPI H.264 硬件编码)
+# - Weston compositor (headless + GL renderer)
+# - EGL/Mesa 库 (GPU 加速渲染)
+# - dbus (Chrome GPU 初始化)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     intel-media-va-driver-non-free \
     libigdgmm12 \
     vainfo \
+    weston \
+    libegl1-mesa \
+    libgles2-mesa \
+    libgl1-mesa-dri \
+    mesa-utils \
+    dbus \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # 指定 VA-API 驱动
 ENV LIBVA_DRIVER_NAME=iHD
 
-USER ubuntu
+# Weston 配置
+COPY weston.ini /home/ubuntu/.config/weston.ini
+RUN chown -R ubuntu:ubuntu /home/ubuntu/.config
 
-CMD ["python", "-u", "-m", "server.app"]
+# GPU entrypoint
+COPY entrypoint-gpu.sh /usr/local/bin/entrypoint-gpu.sh
+RUN chmod +x /usr/local/bin/entrypoint-gpu.sh
+
+USER root
+ENTRYPOINT ["/usr/local/bin/entrypoint-gpu.sh"]

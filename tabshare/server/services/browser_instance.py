@@ -25,17 +25,15 @@ BASE_ARGS = [
     "--unsafely-treat-insecure-origin-as-secure=http://127.0.0.1:8088",
 ]
 
-# 硬件加速参数 — VAAPI H.264 硬件编码 + SwiftShader 软件 WebGL
-# headless 容器无法实现硬件 3D (需要 VT/seat), SwiftShader 提供软件 WebGL
-# VAAPI 编码走 renderD128 硬件加速, 两者独立不冲突
+# 硬件加速参数 — Weston GL renderer 提供 Wayland compositor + GPU EGL
+# Weston headless + GL renderer 通过 render node (renderD128) 实现 GPU 合成
+# Chrome 通过 ozone-platform=wayland 连接 Weston，EGL 初始化可用
 GPU_ACCEL_ARGS = [
     "--enable-features=VaapiVideoDecoder,VaapiVideoEncoder,VaapiVideoEncodeLinuxGL,UseOzonePlatform",
-    "--ozone-platform=headless",
+    "--ozone-platform=wayland",
     "--disable-features=UseChromeOSDirectVideoDecoder",
     "--enable-accelerated-video-decode",
-    "--use-gl=angle",
-    "--use-angle=swiftshader-webgl",
-    "--enable-unsafe-swiftshader",
+    "--use-gl=egl",
     "--enable-gpu-rasterization",
     "--enable-zero-copy",
     "--disable-gpu-sandbox",
@@ -190,15 +188,16 @@ class BrowserInstance:
             self.playwright = await async_playwright().start()
 
             # 决定 headless 策略:
-            # - GPU: headless=new + SwiftShader WebGL + VAAPI 编码
+            # - GPU: 非 headless, 连接 Weston Wayland compositor (Weston 自身是 headless)
             # - CPU: Playwright 默认 headless
             ignore_args = ["--enable-automation"]
 
             if use_gpu:
                 use_headless = False
-                launch_args.append("--headless=new")
+                # Chrome 以非 headless 模式连 Weston Wayland，Weston 输出到 headless backend
+                # 不再需要 --headless=new，但要阻止 Playwright 注入旧版 headless 参数
                 ignore_args.extend(["--headless", "--headless=old"])
-                print(f"[Browser {self.browser_id}] GPU mode: SwiftShader WebGL + VAAPI H.264")
+                print(f"[Browser {self.browser_id}] GPU mode: Weston GL + VAAPI H.264")
             else:
                 use_headless = True
 

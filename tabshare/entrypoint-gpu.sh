@@ -1,15 +1,16 @@
 #!/bin/bash
-# GPU 模式启动脚本 (参考 antigravity 项目)
-# 1. 启动 dbus  2. 设备权限  3. Weston  4. 应用 (ubuntu 用户)
+# GPU 模式启动脚本
+# Weston headless + GL renderer → 提供 Wayland socket → Chrome 硬件 EGL
 set -e
 
 # ===== 1. 设备权限 =====
 if [ -d /dev/dri ]; then
     chmod 666 /dev/dri/* || true
     echo "[entrypoint] /dev/dri permissions set"
+    ls -la /dev/dri/
 fi
 
-# ===== 2. 启动 DBus (Chrome GPU 初始化需要) =====
+# ===== 2. 启动 DBus =====
 mkdir -p /var/run/dbus /var/lib/dbus
 dbus-uuidgen > /var/lib/dbus/machine-id 2>/dev/null || true
 dbus-daemon --system --fork 2>/dev/null || true
@@ -24,42 +25,54 @@ chmod 700 "$XDG_RUNTIME_DIR"
 # 清理残留 socket
 rm -f "$XDG_RUNTIME_DIR"/wayland-* 2>/dev/null || true
 
-# ===== 4. 启动 Weston (以 ubuntu) =====
-# 先试 DRM backend (直接 GPU)，失败回退 headless
-echo "[entrypoint] Starting Weston..."
+# ===== 4. 启动 Weston (headless + GL renderer) =====
+echo "[entrypoint] Starting Weston (headless + GL renderer)..."
+
+# 先尝试 GL renderer (GPU 加速)
 su -s /bin/bash ubuntu -c "
     export XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR
     weston --config=/home/ubuntu/.config/weston.ini 2>/tmp/weston.log &
 " &
-sleep 2
+sleep 3
 
 # 检查 Wayland socket
 SOCKET=$(ls "$XDG_RUNTIME_DIR"/wayland-[0-9] 2>/dev/null | head -1)
 
-if [ -z "$SOCKET" ]; then
-    echo "[entrypoint] Weston auto-detect failed, trying headless backend..."
+if [ -n "$SOCKET" ]; then
+    echo "[entrypoint] Weston GL renderer started successfully"
+    # 检查是否真的用了 GL renderer
+    if grep -q "GL renderer" /tmp/weston.log 2>/dev/null; then
+        echo "[entrypoint] ✅ GL renderer confirmed (GPU accelerated)"
+    elif grep -q "pixman" /tmp/weston.log 2>/dev/null; then
+        echo "[entrypoint] ⚠️  Fell back to pixman (software), GL renderer failed"
+    fi
+    echo "[entrypoint] Weston log (first 10 lines):"
+    head -10 /tmp/weston.log 2>/dev/null || true
+else
+    echo "[entrypoint] Weston GL failed, trying headless without GL..."
     cat /tmp/weston.log 2>/dev/null || true
 
+    # 回退: headless + pixman (软件渲染)
     su -s /bin/bash ubuntu -c "
         export XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR
-        weston --backend=headless --no-config --width=1280 --height=720 2>/tmp/weston-headless.log &
+        weston --backend=headless --no-config --width=1920 --height=1080 2>/tmp/weston-fallback.log &
     " &
     sleep 2
     SOCKET=$(ls "$XDG_RUNTIME_DIR"/wayland-[0-9] 2>/dev/null | head -1)
-fi
 
-if [ -z "$SOCKET" ]; then
-    echo "[entrypoint] WARNING: Weston failed entirely, running without Wayland"
-    cat /tmp/weston-headless.log 2>/dev/null || true
-    exec su -s /bin/bash ubuntu -c "python -u -m server.app"
+    if [ -n "$SOCKET" ]; then
+        echo "[entrypoint] Weston headless (pixman) started as fallback"
+    else
+        echo "[entrypoint] WARNING: Weston failed entirely, running without Wayland"
+        cat /tmp/weston-fallback.log 2>/dev/null || true
+        exec su -s /bin/bash ubuntu -c "python -u -m server.app"
+    fi
 fi
 
 WAYLAND_DISPLAY=$(basename "$SOCKET")
 echo "[entrypoint] Weston ready: WAYLAND_DISPLAY=$WAYLAND_DISPLAY"
-echo "[entrypoint] Weston log:"
-cat /tmp/weston.log 2>/dev/null | head -5 || true
 
-# ===== 5. 启动应用 (ubuntu 用户，继承环境) =====
+# ===== 5. 启动应用 =====
 exec su -s /bin/bash ubuntu -c "
     export XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR
     export WAYLAND_DISPLAY=$WAYLAND_DISPLAY
