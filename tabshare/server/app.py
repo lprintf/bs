@@ -116,6 +116,43 @@ async def eval_js(browser_id: int, tab_id: int, request: Request):
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
+@app.get("/api/gpu-info/{browser_id}/{tab_id}")
+async def gpu_info(browser_id: int, tab_id: int):
+    """Debug: 获取 Chrome GPU/WebGL 信息"""
+    tab = browser_manager.find_tab(browser_id, tab_id)
+    if not tab:
+        return JSONResponse({"error": "Tab not found"}, status_code=404)
+    try:
+        # 方法1: 通过 JS 检测 WebGL
+        js_info = await tab.page.evaluate("""() => {
+            const info = {};
+            const c = document.createElement('canvas');
+            for (const ctx of ['webgl2', 'webgl', 'experimental-webgl']) {
+                const gl = c.getContext(ctx, {failIfMajorPerformanceCaveat: false});
+                if (gl) {
+                    info.context = ctx;
+                    info.renderer = gl.getParameter(gl.RENDERER);
+                    info.vendor = gl.getParameter(gl.VENDOR);
+                    info.version = gl.getParameter(gl.VERSION);
+                    info.shadingLanguage = gl.getParameter(gl.SHADING_LANGUAGE_VERSION);
+                    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+                    if (ext) {
+                        info.unmaskedRenderer = gl.getParameter(ext.UNMASKED_RENDERER_WEBGL);
+                        info.unmaskedVendor = gl.getParameter(ext.UNMASKED_VENDOR_WEBGL);
+                    }
+                    break;
+                }
+            }
+            if (!info.context) info.error = 'No WebGL context available';
+            info.hardwareConcurrency = navigator.hardwareConcurrency;
+            info.platform = navigator.platform;
+            return info;
+        }""")
+
+        return {"webgl": js_info}
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
 
 # ── File serving ──
 from server.services.browser_instance import DOWNLOADS_DIR

@@ -13,17 +13,17 @@
 | 功能 | 状态 | 方案 |
 |---|---|---|
 | VAAPI H.264 编码 | ✅ 已实现 | `intel-media-va-driver-non-free` + `renderD128` |
-| WebGL 渲染 | ⚠️ 软件渲染 | SwiftShader (Chrome 自带) |
-| GPU 3D 硬件渲染 | ❌ 不可行 | 需要 VT/seat，Docker 容器不支持 |
+| WebGL 硬件渲染 | ✅ 已实现 | Chrome headless + ANGLE Vulkan → Intel ANV Mesa |
+| GPU 合成/光栅化 | ✅ 已实现 | ANGLE Vulkan 通过 render node 直接访问 GPU |
 
-**核心发现**：VAAPI 视频编码和 WebGL 3D 渲染走的是**完全不同的路径**：
+**最终方案**：Chrome `headless=new` + `--use-gl=angle --use-angle=vulkan`
+- Chrome 自带虚拟显示（不需要 Weston/X11/Wayland）
+- ANGLE Vulkan 后端通过 `/dev/dri/renderD128` 直接访问 Intel GPU
+- WebGL 2.0：`ANGLE (Intel, Vulkan 1.4.318 (Intel(R) Graphics (RPL-S)), Intel open-source Mesa driver)`
 
-| | VAAPI 编码 | WebGL/3D 渲染 |
-|---|---|---|
-| 设备 | `/dev/dri/renderD128` | `/dev/dri/card1` |
-| 需要 DRM master | ❌ | ✅ |
-| 需要 VT/seat | ❌ | ✅ |
-| Docker 容器可用 | ✅ | ❌ |
+**关键依赖**：
+- `mesa-vulkan-drivers` — Intel ANV Vulkan 驱动（WebGL 渲染）
+- `intel-media-va-driver-non-free` — VAAPI iHD 驱动（H.264 编码）
 
 ## 分支历史
 

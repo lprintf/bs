@@ -25,15 +25,15 @@ BASE_ARGS = [
     "--unsafely-treat-insecure-origin-as-secure=http://127.0.0.1:8088",
 ]
 
-# 硬件加速参数 — Weston GL renderer 提供 Wayland compositor + GPU EGL
-# Weston headless + GL renderer 通过 render node (renderD128) 实现 GPU 合成
-# Chrome 通过 ozone-platform=wayland 连接 Weston，EGL 初始化可用
+# 硬件加速参数 — headless=new + ANGLE Vulkan
+# Chrome headless=new 自带虚拟显示，ANGLE Vulkan 通过 render node 直接用 GPU
+# 不需要 Weston/Wayland compositor
 GPU_ACCEL_ARGS = [
-    "--enable-features=VaapiVideoDecoder,VaapiVideoEncoder,VaapiVideoEncodeLinuxGL,UseOzonePlatform",
-    "--ozone-platform=wayland",
+    "--enable-features=VaapiVideoDecoder,VaapiVideoEncoder,VaapiVideoEncodeLinuxGL,Vulkan",
     "--disable-features=UseChromeOSDirectVideoDecoder",
     "--enable-accelerated-video-decode",
-    "--use-gl=egl",
+    "--use-gl=angle",
+    "--use-angle=vulkan",
     "--enable-gpu-rasterization",
     "--enable-zero-copy",
     "--disable-gpu-sandbox",
@@ -187,19 +187,13 @@ class BrowserInstance:
             # 4. launch_persistent_context
             self.playwright = await async_playwright().start()
 
-            # 决定 headless 策略:
-            # - GPU: 非 headless, 连接 Weston Wayland compositor (Weston 自身是 headless)
-            # - CPU: Playwright 默认 headless
+            # headless 策略: GPU 和 CPU 模式都用 headless
+            # GPU 模式用 headless=new + ANGLE Vulkan 直接访问 GPU render node
             ignore_args = ["--enable-automation"]
+            use_headless = True
 
             if use_gpu:
-                use_headless = False
-                # Chrome 以非 headless 模式连 Weston Wayland，Weston 输出到 headless backend
-                # 不再需要 --headless=new，但要阻止 Playwright 注入旧版 headless 参数
-                ignore_args.extend(["--headless", "--headless=old"])
-                print(f"[Browser {self.browser_id}] GPU mode: Weston GL + VAAPI H.264")
-            else:
-                use_headless = True
+                print(f"[Browser {self.browser_id}] GPU mode: headless + ANGLE Vulkan + VAAPI H.264")
 
             launch_kwargs = {
                 "user_data_dir": str(profile_dir),
