@@ -25,17 +25,21 @@ BASE_ARGS = [
     "--unsafely-treat-insecure-origin-as-secure=http://127.0.0.1:8088",
 ]
 
-# 硬件加速(VAAPI)参数 — 启用 H.264 硬件编码/解码
-# 有 Xvfb 虚拟显示时: 不需要 ozone headless, Chrome 走 X11 + EGL 完整 GPU 初始化
-# 无 Xvfb 时: 仅 VAAPI 编码可用, GPU 渲染/WebGL 不可用
+# 硬件加速参数 — VAAPI H.264 硬件编码 + SwiftShader 软件 WebGL
+# headless 容器无法实现硬件 3D (需要 VT/seat), SwiftShader 提供软件 WebGL
+# VAAPI 编码走 renderD128 硬件加速, 两者独立不冲突
 GPU_ACCEL_ARGS = [
-    "--enable-features=VaapiVideoDecoder,VaapiVideoEncoder,VaapiVideoEncodeLinuxGL",
+    "--enable-features=VaapiVideoDecoder,VaapiVideoEncoder,VaapiVideoEncodeLinuxGL,UseOzonePlatform",
+    "--ozone-platform=headless",
     "--disable-features=UseChromeOSDirectVideoDecoder",
     "--enable-accelerated-video-decode",
-    "--use-gl=desktop",
+    "--use-gl=angle",
+    "--use-angle=swiftshader-webgl",
+    "--enable-unsafe-swiftshader",
     "--enable-gpu-rasterization",
     "--enable-zero-copy",
     "--disable-gpu-sandbox",
+    "--ignore-gpu-blocklist",
 ]
 
 _SUPPRESSED_LOGS = ["Failed to execute 'postMessage' on 'DOMWindow'"]
@@ -186,23 +190,15 @@ class BrowserInstance:
             self.playwright = await async_playwright().start()
 
             # 决定 headless 策略:
-            # - GPU + Xvfb (DISPLAY set): 非 headless, 渲染到虚拟显示, 完整 GPU
-            # - GPU 无显示: headless=new + ozone, 仅 VAAPI 编码
+            # - GPU: headless=new + SwiftShader WebGL + VAAPI 编码
             # - CPU: Playwright 默认 headless
-            has_display = bool(os.environ.get("DISPLAY"))
             ignore_args = ["--enable-automation"]
 
-            if use_gpu and has_display:
-                # Xvfb 模式: Chrome 渲染到虚拟显示, GPU 渲染+合成+编码全可用
+            if use_gpu:
                 use_headless = False
-                print(f"[Browser {self.browser_id}] Xvfb detected (DISPLAY={os.environ['DISPLAY']}), full GPU mode")
-            elif use_gpu:
-                # 无显示: 回退 headless=new, 仅 VAAPI 编码
-                use_headless = False
-                launch_args.extend(["--headless=new", "--ozone-platform=headless"])
-                launch_args.append("--enable-features=UseOzonePlatform")
+                launch_args.append("--headless=new")
                 ignore_args.extend(["--headless", "--headless=old"])
-                print(f"[Browser {self.browser_id}] No display, headless GPU mode (VAAPI only)")
+                print(f"[Browser {self.browser_id}] GPU mode: SwiftShader WebGL + VAAPI H.264")
             else:
                 use_headless = True
 

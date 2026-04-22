@@ -4,24 +4,16 @@ FROM bs-tabshare
 
 USER root
 
-# 安装 Intel iHD 驱动 + Xvfb 虚拟显示 + Mesa DRI (GPU 渲染)
+# 安装 Intel iHD 驱动 (VAAPI H.264 硬件编码)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     intel-media-va-driver-non-free \
     libigdgmm12 \
-    libegl1 \
-    libgl1-mesa-dri \
-    xvfb \
     vainfo \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # 指定 VA-API 驱动
 ENV LIBVA_DRIVER_NAME=iHD
 
-# GPU 启动脚本: 先启 Xvfb 再启应用
-COPY tabshare/entrypoint-gpu.sh /usr/local/bin/entrypoint-gpu.sh
-RUN chmod +x /usr/local/bin/entrypoint-gpu.sh
-
 USER ubuntu
 
-CMD ["/usr/local/bin/entrypoint-gpu.sh"]
-
+CMD ["python", "-u", "-m", "server.app"]
