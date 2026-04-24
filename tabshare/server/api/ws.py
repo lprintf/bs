@@ -1,8 +1,11 @@
 """
 WebSocket handler — Relays mouse/keyboard/IME input to Playwright pages.
 Route: /ws/tab/{browser_id}/{tab_id}
+
+滚动优化: fire-and-forget CDP 派发，不等往返。
 """
 import json
+import asyncio
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from server.services.browser_manager import browser_manager
 
@@ -45,7 +48,11 @@ async def ws_input(websocket: WebSocket, browser_id: int, tab_id: int):
                         await page.mouse.up(button=pw_btn if btn != "none" else "left")
                     
                 elif t == "scroll":
-                    await page.mouse.wheel(msg.get("deltaX", 0), msg.get("deltaY", 0))
+                    # Fire-and-forget: 不等 CDP 往返
+                    asyncio.create_task(_scroll_fire(page, msg.get("deltaX", 0), msg.get("deltaY", 0)))
+                    # 滚动时切换编码器为 motion 模式（保帧率），停止后恢复 detail（保清晰度）
+                    asyncio.create_task(_set_content_hint(page, "motion"))
+                    _schedule_detail_revert(page)
                 
                 elif t == "keyboard":
                     key = msg.get("key", "")
@@ -81,3 +88,38 @@ async def ws_input(websocket: WebSocket, browser_id: int, tab_id: int):
             await websocket.close()
         except Exception:
             pass
+
+
+async def _scroll_fire(page, dx, dy):
+    """Fire-and-forget scroll — 不阻塞 WS 消息循环"""
+    try:
+        await page.mouse.wheel(dx, dy)
+    except Exception:
+        pass
+
+
+async def _set_content_hint(page, hint):
+    """切换 contentHint: 'motion'(保帧率) / 'detail'(保清晰度)"""
+    try:
+        await page.evaluate(f"window.__setContentHint && window.__setContentHint('{hint}')")
+    except Exception:
+        pass
+
+
+# 用于延迟恢复 detail 模式的定时器
+_revert_tasks: dict = {}
+
+def _schedule_detail_revert(page):
+    """滚动停止 300ms 后恢复 detail 模式"""
+    page_id = id(page)
+    # 取消上一次的定时器
+    if page_id in _revert_tasks and not _revert_tasks[page_id].done():
+        _revert_tasks[page_id].cancel()
+    _revert_tasks[page_id] = asyncio.create_task(_delayed_revert(page))
+
+async def _delayed_revert(page):
+    try:
+        await asyncio.sleep(0.3)
+        await _set_content_hint(page, "detail")
+    except asyncio.CancelledError:
+        pass

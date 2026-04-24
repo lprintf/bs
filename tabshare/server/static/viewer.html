@@ -522,7 +522,8 @@
             ws.onopen = () => {
                 setStatus('Waiting for stream…', 'connecting');
                 applyResolution();
-                loadTabBar();
+                renderTabBar();
+                fetchCurrentTabUrl();
                 // Connect SFU after viewport is applied (give backend time to resize)
                 setTimeout(connectSFU, 300);
             };
@@ -565,7 +566,7 @@
                         _popupOverlayTimer = null;
                         hideNavOverlay();
                         if (msg.tab_id >= 0) {
-                            loadTabBar();
+                            if (!myTabs.includes(msg.tab_id)) myTabs.push(msg.tab_id);
                             switchTab(msg.tab_id);
                         }
                     }
@@ -910,36 +911,38 @@
         }
         setInterval(pollStats, 1000);
 
-        // ─── View Group (Tab Bar) ───
-        async function loadTabBar() {
+        // ─── Local Tab Bar (per-viewer, not synced with backend) ───
+        let myTabs = [activeTabId]; // 本地 tab 列表，初始只有 URL 中的 tab
+
+        function renderTabBar() {
+            tabBar.innerHTML = myTabs.map(tid => {
+                const isActive = tid === activeTabId;
+                return `<div class="tab-item${isActive ? ' active' : ''}" data-tid="${tid}">
+                    <span class="tab-title" onclick="switchTab(${tid})">tab ${tid}</span>
+                    <span class="tab-close" onclick="event.stopPropagation(); closeTab(${tid})">×</span>
+                </div>`;
+            }).join('') + '<div class="tab-new" onclick="createNewTab()" title="New Tab">+</div>';
+        }
+
+        // 初始化：获取当前 tab 的 URL
+        async function fetchCurrentTabUrl() {
             try {
                 const data = await fetch(`/api/admin/browsers/${browserId}/tabs`).then(r => r.json());
-                const tabs = data.tabs || [];
-                // Update URL bar with current tab's URL
-                const cur = tabs.find(t => t.tab_id === activeTabId);
+                const cur = (data.tabs || []).find(t => t.tab_id === activeTabId);
                 if (cur && cur.url) urlInput.value = cur.url;
-                // Render tab bar
-                tabBar.innerHTML = tabs.map(t => {
-                    const label = `tab ${t.tab_id}`;
-                    const isActive = t.tab_id === activeTabId;
-                    return `<div class="tab-item${isActive ? ' active' : ''}" data-tid="${t.tab_id}">
-                        <span class="tab-title" onclick="switchTab(${t.tab_id})">${label}</span>
-                        <span class="tab-close" onclick="event.stopPropagation(); closeTab(${t.tab_id})">×</span>
-                    </div>`;
-                }).join('') + '<div class="tab-new" onclick="createNewTab()" title="New Tab">+</div>';
-            } catch(e) {
-                console.error('loadTabBar error:', e);
-            }
+            } catch(e) {}
         }
 
         async function switchTab(newTabId) {
             if (newTabId === activeTabId) return;
-            const oldTabId = activeTabId;
+            // 确保目标 tab 在本地列表中
+            if (!myTabs.includes(newTabId)) myTabs.push(newTabId);
             activeTabId = newTabId;
             activeRoom = `${browserId}_${activeTabId}`;
             tabLabel.textContent = `${browserId}/${activeTabId}`;
             document.title = `TabShare - ${browserId}/${activeTabId}`;
             history.replaceState(null, '', `/viewer/${browserId}/${activeTabId}`);
+            renderTabBar();
 
             // Fast path: if PC is connected and we have a sub_id, use /switch
             if (pc && sfuSubId && pc.iceConnectionState === 'connected') {
@@ -954,7 +957,6 @@
                     });
                     if (res.ok) {
                         console.log('[viewer] fast switch to', activeRoom);
-                        // Video will update automatically via ReplaceTrack
                         return;
                     }
                     console.warn('[viewer] switch failed, falling back to reconnect');
@@ -971,18 +973,16 @@
             if (!confirm(`Close tab ${tid}?`)) return;
             try {
                 await fetch(`/api/admin/browsers/${browserId}/tabs/${tid}`, {method: 'DELETE'});
+                myTabs = myTabs.filter(t => t !== tid);
                 if (tid === activeTabId) {
-                    // Switch to another tab if available
-                    const data = await fetch(`/api/admin/browsers/${browserId}/tabs`).then(r => r.json());
-                    const remaining = data.tabs || [];
-                    if (remaining.length > 0) {
-                        switchTab(remaining[0].tab_id);
+                    if (myTabs.length > 0) {
+                        switchTab(myTabs[0]);
                     } else {
-                        tabBar.innerHTML = '<div class="tab-new" onclick="createNewTab()" title="New Tab">+</div>';
+                        renderTabBar();
                         setStatus('No tabs', 'error');
                     }
                 } else {
-                    loadTabBar();
+                    renderTabBar();
                 }
             } catch(e) {
                 console.error('closeTab error:', e);
@@ -1001,7 +1001,10 @@
                     }),
                 });
                 const tab = await res.json();
-                if (tab.tab_id) switchTab(tab.tab_id);
+                if (tab.tab_id >= 0) {
+                    myTabs.push(tab.tab_id);
+                    switchTab(tab.tab_id);
+                }
             } catch(e) {
                 console.error('createNewTab error:', e);
             }

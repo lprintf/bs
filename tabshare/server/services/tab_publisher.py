@@ -194,7 +194,7 @@ class TabPublisher:
                         audio: false,
                         video: {
                             displaySurface: "browser",
-                            frameRate: { ideal: 30, max: 30 }
+                            frameRate: { ideal: 60, max: 60 }
                         },
                         preferCurrentTab: true
                     });
@@ -204,6 +204,11 @@ class TabPublisher:
                         t.contentHint = 'detail';
                     });
 
+                    // 暴露 contentHint 切换 API：滚动时 motion（保帧率），静止时 detail（保清晰度）
+                    window.__setContentHint = (hint) => {
+                        stream.getVideoTracks().forEach(t => { t.contentHint = hint; });
+                    };
+
                     const pc = new RTCPeerConnection({
                         iceServers: [],
                         iceTransportPolicy: "all"
@@ -211,13 +216,14 @@ class TabPublisher:
 
                     stream.getVideoTracks().forEach(t => {
                         const sender = pc.addTrack(t, stream);
-                        // 限制编码参数，稳定质量
                         const params = sender.getParameters();
                         if (params.encodings && params.encodings.length > 0) {
-                            params.encodings[0].maxBitrate = 4000000; // 4 Mbps
-                            params.encodings[0].maxFramerate = 30;
+                            params.encodings[0].maxBitrate = 60000000; // 60 Mbps
+                            params.encodings[0].maxFramerate = 60;
                             sender.setParameters(params).catch(() => {});
                         }
+                        // 编码器压力大时降分辨率而不是掉帧
+                        sender.getParameters().degradationPreference = 'maintain-framerate';
                     });
 
                     const offer = await pc.createOffer();

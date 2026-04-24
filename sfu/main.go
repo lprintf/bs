@@ -223,21 +223,12 @@ func handlePublisher(room *Room, offer webrtc.SessionDescription) (*webrtc.Sessi
 	pc.OnTrack(func(remoteTrack *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
 		log.Printf("[pub] got track: %s codec=%s", remoteTrack.ID(), remoteTrack.Codec().MimeType)
 
-		// Send periodic PLI as safety net (main PLI comes on-demand from subscribers)
+		// Send a single PLI at start for quick first-frame, no periodic PLI
+		// (periodic PLI causes stuttering from oversized I-frames)
 		go func() {
-			ticker := time.NewTicker(10 * time.Second)
-			defer ticker.Stop()
 			pc.WriteRTCP([]rtcp.Packet{
 				&rtcp.PictureLossIndication{MediaSSRC: uint32(remoteTrack.SSRC())},
 			})
-			for range ticker.C {
-				if pc.ConnectionState() != webrtc.PeerConnectionStateConnected {
-					return
-				}
-				pc.WriteRTCP([]rtcp.Packet{
-					&rtcp.PictureLossIndication{MediaSSRC: uint32(remoteTrack.SSRC())},
-				})
-			}
 		}()
 
 		// Read RTP, rewrite seq/ts for continuity, forward to local track

@@ -45,7 +45,7 @@ main
 - **Dockerfile.intel**: 安装 `intel-media-va-driver-non-free`, `libigdgmm12`, `vainfo`
 - **docker-compose.gpu.yml**: 挂载 `/dev/dri`, 添加 `group_add: ["992"]` (render 组)
 - **browser_instance.py**: GPU 检测 + Chrome VAAPI flags
-- **tab_publisher.py**: `frameRate: 30`, `contentHint: 'detail'`, `maxBitrate: 4Mbps`
+- **tab_publisher.py**: `frameRate: 60`, `contentHint: 'detail'`, `maxBitrate: 60Mbps`
 - **sfu/main.go**: PLI 按需触发 + 10s 兜底, RTCP 转发
 
 ### Chrome GPU 参数

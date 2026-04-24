@@ -29,7 +29,7 @@ BASE_ARGS = [
 # Chrome headless=new 自带虚拟显示，ANGLE Vulkan 通过 render node 直接用 GPU
 # 不需要 Weston/Wayland compositor
 GPU_ACCEL_ARGS = [
-    "--enable-features=VaapiVideoDecoder,VaapiVideoEncoder,VaapiVideoEncodeLinuxGL,Vulkan",
+    "--enable-features=VaapiVideoDecoder,VaapiVideoEncoder,VaapiVideoEncodeLinuxGL,Vulkan,PassiveEventListenersByDefault",
     "--disable-features=UseChromeOSDirectVideoDecoder",
     "--enable-accelerated-video-decode",
     "--use-gl=angle",
@@ -38,6 +38,13 @@ GPU_ACCEL_ARGS = [
     "--enable-zero-copy",
     "--disable-gpu-sandbox",
     "--ignore-gpu-blocklist",
+    # headless 帧率
+    "--disable-gpu-vsync",
+    # 多核光栅化: 复杂页面滚动时并行绘制 tile
+    "--num-raster-threads=8",
+    "--enable-oop-rasterization",
+    # 滚动优化
+    "--enable-smooth-scrolling",
 ]
 
 _SUPPRESSED_LOGS = ["Failed to execute 'postMessage' on 'DOMWindow'"]
