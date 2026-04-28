@@ -118,12 +118,12 @@ async def eval_js(browser_id: int, tab_id: int, request: Request):
 
 @app.get("/api/gpu-info/{browser_id}/{tab_id}")
 async def gpu_info(browser_id: int, tab_id: int):
-    """Debug: 获取 Chrome GPU/WebGL 信息"""
+    """Debug: 获取 Chrome GPU/WebGL + WebRTC 编码器信息"""
     tab = browser_manager.find_tab(browser_id, tab_id)
     if not tab:
         return JSONResponse({"error": "Tab not found"}, status_code=404)
     try:
-        # 方法1: 通过 JS 检测 WebGL
+        # WebGL 信息
         js_info = await tab.page.evaluate("""() => {
             const info = {};
             const c = document.createElement('canvas');
@@ -149,9 +149,92 @@ async def gpu_info(browser_id: int, tab_id: int):
             return info;
         }""")
 
-        return {"webgl": js_info}
+        # WebRTC encoder stats
+        encoder_info = await _get_encoder_stats(tab)
+
+        return {"webgl": js_info, "encoder": encoder_info}
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def _get_encoder_stats(tab) -> dict:
+    """从 tab 的 WebRTC PeerConnection 中提取编码器状态"""
+    try:
+        return await tab.page.evaluate("""async () => {
+            if (!window._webrtc || !window._webrtc.pc) {
+                return { error: 'No WebRTC PeerConnection' };
+            }
+            const pc = window._webrtc.pc;
+            const result = {
+                iceState: pc.iceConnectionState,
+                signalingState: pc.signalingState,
+            };
+            try {
+                const stats = await pc.getStats();
+                stats.forEach(r => {
+                    if (r.type === 'outbound-rtp' && r.kind === 'video') {
+                        result.encoderImplementation = r.encoderImplementation || 'unknown';
+                        result.qualityLimitationReason = r.qualityLimitationReason || 'none';
+                        result.targetBitrate = r.targetBitrate ? Math.round(r.targetBitrate / 1000) : null;
+                        result.framesPerSecond = r.framesPerSecond || 0;
+                        result.framesEncoded = r.framesEncoded || 0;
+                        result.keyFramesEncoded = r.keyFramesEncoded || 0;
+                        result.qpSum = r.qpSum || 0;
+                        result.bytesSent = r.bytesSent || 0;
+                        result.codec = r.codecId || null;
+                        result.isHardware = !!(r.encoderImplementation && (
+                            r.encoderImplementation.includes('ExternalEncoder') ||
+                            r.encoderImplementation.includes('Vaapi') ||
+                            r.encoderImplementation.includes('VAAPI') ||
+                            r.encoderImplementation.includes('VideoToolbox') ||
+                            r.encoderImplementation.includes('NVENC') ||
+                            r.encoderImplementation.includes('MediaCodec')
+                        ));
+                    }
+                    if (r.type === 'codec' && r.mimeType && r.mimeType.includes('video')) {
+                        result.codecMime = r.mimeType;
+                        result.codecPayloadType = r.payloadType;
+                    }
+                });
+            } catch(e) {
+                result.statsError = e.toString();
+            }
+            return result;
+        }""")
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/encoder-stats")
+async def encoder_stats_all():
+    """批量查询所有活跃 tab 的编码器状态 — 用于诊断硬件编码是否生效"""
+    results = []
+    for browser in browser_manager.browsers.values():
+        if browser.status != "idle":
+            continue
+        for tab_id, tab in browser.tabs.items():
+            if tab.page.is_closed():
+                continue
+            info = await _get_encoder_stats(tab)
+            info["browser_id"] = browser.browser_id
+            info["tab_id"] = tab_id
+            info["room"] = tab.room_name
+            results.append(info)
+
+    # 汇总
+    hw_count = sum(1 for r in results if r.get("isHardware"))
+    sw_count = sum(1 for r in results if r.get("encoderImplementation") and not r.get("isHardware"))
+    err_count = sum(1 for r in results if r.get("error"))
+
+    return {
+        "summary": {
+            "total": len(results),
+            "hardware": hw_count,
+            "software": sw_count,
+            "error_or_no_pc": err_count,
+        },
+        "tabs": results,
+    }
 
 
 # ── File serving ──

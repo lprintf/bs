@@ -9,7 +9,6 @@ import (
 	"os"
 	"strconv"
 	"sync"
-	"time"
 
 	"github.com/pion/ice/v4"
 	"github.com/pion/rtcp"
@@ -84,12 +83,49 @@ func main() {
 
 	log.Printf("SFU starting: NAT_IP=%s UDP_PORT=%d HTTP_PORT=%d", natIP, udpPort, httpPort)
 
-	// --- MediaEngine: register default codecs (H.264 enforced at track level) ---
+	// --- MediaEngine: only H.264 (force hardware encoding via VAAPI) ---
+	// High Profile (640032) first for best quality, then Baseline as fallback.
+	// DO NOT use RegisterDefaultCodecs() — it adds VP8/VP9 and breaks VAAPI.
 	me := &webrtc.MediaEngine{}
-	if err := me.RegisterDefaultCodecs(); err != nil {
-		log.Fatalf("Failed to register default codecs: %v", err)
+	for _, codec := range []webrtc.RTPCodecParameters{
+		{
+			RTPCodecCapability: webrtc.RTPCodecCapability{
+				MimeType:    webrtc.MimeTypeH264,
+				ClockRate:   90000,
+				SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=640032",
+			},
+			PayloadType: 123,
+		},
+		{
+			RTPCodecCapability: webrtc.RTPCodecCapability{
+				MimeType:    webrtc.MimeTypeH264,
+				ClockRate:   90000,
+				SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f",
+			},
+			PayloadType: 125,
+		},
+		{
+			RTPCodecCapability: webrtc.RTPCodecCapability{
+				MimeType:    webrtc.MimeTypeH264,
+				ClockRate:   90000,
+				SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f",
+			},
+			PayloadType: 102,
+		},
+		{
+			RTPCodecCapability: webrtc.RTPCodecCapability{
+				MimeType:    webrtc.MimeTypeH264,
+				ClockRate:   90000,
+				SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42001f",
+			},
+			PayloadType: 127,
+		},
+	} {
+		if err := me.RegisterCodec(codec, webrtc.RTPCodecTypeVideo); err != nil {
+			log.Fatalf("Failed to register H.264 codec: %v", err)
+		}
 	}
-	log.Printf("MediaEngine: default codecs registered (H.264 enforced at track level)")
+	log.Printf("MediaEngine: H.264 only (High Profile 640032 preferred, VAAPI)")
 
 	// --- pion SettingEngine ---
 	se := webrtc.SettingEngine{}
@@ -233,6 +269,7 @@ func handlePublisher(room *Room, offer webrtc.SessionDescription) (*webrtc.Sessi
 
 		// Read RTP, rewrite seq/ts for continuity, forward to local track
 		buf := make([]byte, 65535)
+		var pktCount, kfCount uint64
 		for {
 			n, _, readErr := remoteTrack.Read(buf)
 			if readErr != nil {
@@ -271,6 +308,32 @@ func handlePublisher(room *Room, offer webrtc.SessionDescription) (*webrtc.Sessi
 				}
 				copy(clonedPkt.Payload, pkt.Payload)
 				rec.PushRTP(clonedPkt)
+			}
+
+			// H.264 keyframe detection: NAL type 5 = IDR frame
+			pktCount++
+			if len(pkt.Payload) > 0 {
+				nalType := pkt.Payload[0] & 0x1F
+				if nalType == 5 { // IDR = keyframe
+					kfCount++
+				} else if nalType == 24 && len(pkt.Payload) > 3 {
+					// STAP-A: check first NAL unit inside
+					innerNalType := pkt.Payload[3] & 0x1F
+					if innerNalType == 5 {
+						kfCount++
+					}
+				} else if nalType == 28 && len(pkt.Payload) > 1 {
+					// FU-A: check start bit + NAL type
+					fuHeader := pkt.Payload[1]
+					isStart := (fuHeader & 0x80) != 0
+					fuNalType := fuHeader & 0x1F
+					if isStart && fuNalType == 5 {
+						kfCount++
+					}
+				}
+			}
+			if pktCount%300 == 0 {
+				log.Printf("[pub] RTP stats: %d pkts, %d keyframes (%.1f%%)", pktCount, kfCount, float64(kfCount)/float64(pktCount)*100)
 			}
 
 			if writeErr := videoTrack.WriteRTP(pkt); writeErr != nil {

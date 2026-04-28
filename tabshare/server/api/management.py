@@ -30,7 +30,7 @@ class UpdateBrowserRequest(BaseModel):
 
 
 class CreateTabRequest(BaseModel):
-    url: str = "https://www.google.com"
+    url: str = "https://www.bing.com"
     viewport_width: int = 1280
     viewport_height: int = 720
 

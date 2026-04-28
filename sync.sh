@@ -6,11 +6,12 @@
 # 需要手动复制deb文件: 
 # scp -r ./tabshare/data/opt/deb shawn@192.168.0.37:/home/shawn/bs/tabshare/data/opt/deb
 # scp -r ./tabshare/data/opt/deb shawn@192.168.0.96:/home/shawn/bs/tabshare/data/opt/deb
+# scp -r ./tabshare/data/opt/deb shawn@192.168.0.24:/home/shawn/bs/tabshare/data/opt/deb
 
 set -euo pipefail
 
 # ---------- 配置（可通过命令行参数或环境变量覆盖） ----------
-REMOTE="${1:-${SYNC_REMOTE:-shawn@192.168.0.37}}"
+REMOTE="${1:-${SYNC_REMOTE:-shawn@192.168.0.24}}"
 REMOTE_PATH="${2:-${SYNC_PATH:-~/bs}}"
 LOCAL_DIR="$(cd "$(dirname "$0")" && pwd)"
 

@@ -29,7 +29,7 @@ BASE_ARGS = [
 # Chrome headless=new 自带虚拟显示，ANGLE Vulkan 通过 render node 直接用 GPU
 # 不需要 Weston/Wayland compositor
 GPU_ACCEL_ARGS = [
-    "--enable-features=VaapiVideoDecoder,VaapiVideoEncoder,VaapiVideoEncodeLinuxGL,Vulkan,PassiveEventListenersByDefault",
+    "--enable-features=VaapiVideoDecoder,AcceleratedVideoEncoder,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL,Vulkan,PassiveEventListenersByDefault",
     "--disable-features=UseChromeOSDirectVideoDecoder",
     "--enable-accelerated-video-decode",
     "--use-gl=angle",
@@ -190,6 +190,13 @@ class BrowserInstance:
                     "--use-angle=swiftshader-webgl"
                 ])
             launch_args.append(f"--lang={self.fingerprint.locale}")
+
+            # Extension: 原生 DOM 事件注入（绕过 CDP 主线程）
+            ext_dir = str(Path(__file__).parent.parent.parent / "extension")
+            if Path(ext_dir).exists():
+                launch_args.append(f"--disable-extensions-except={ext_dir}")
+                launch_args.append(f"--load-extension={ext_dir}")
+                print(f"[Browser {self.browser_id}] Input extension loaded: {ext_dir}")
 
             # 4. launch_persistent_context
             self.playwright = await async_playwright().start()

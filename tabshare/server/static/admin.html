@@ -1,41 +1,79 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TabShare Admin</title>
     <link rel="stylesheet" href="/static/css/common.css">
     <style>
-        .tab-content { display: none; }
-        .tab-content.active { display: block; }
-        .refresh-btn {
-            position: fixed; bottom: 2rem; right: 2rem;
-            width: 50px; height: 50px; border-radius: 50%;
-            background: #667eea; color: white; border: none;
-            cursor: pointer; font-size: 1.5rem;
-            box-shadow: 0 4px 12px rgba(102,126,234,0.4);
-            transition: all 0.2s; z-index: 100;
+        .tab-content {
+            display: none;
         }
-        .refresh-btn:hover { transform: scale(1.1); }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .refresh-btn {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background: #667eea;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-size: 1.5rem;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+            transition: all 0.2s;
+            z-index: 100;
+        }
+
+        .refresh-btn:hover {
+            transform: scale(1.1);
+        }
+
         .view-btn {
             background: linear-gradient(135deg, #11998e, #38ef7d);
-            color: white; text-decoration: none;
-            padding: 0.4rem 0.8rem; border-radius: 6px;
-            font-size: 0.8rem; display: inline-block;
+            color: white;
+            text-decoration: none;
+            padding: 0.4rem 0.8rem;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            display: inline-block;
         }
-        .view-btn:hover { opacity: 0.9; }
+
+        .view-btn:hover {
+            opacity: 0.9;
+        }
+
         .proxy-tag {
-            display: inline-block; padding: 0.15rem 0.5rem;
-            background: #e8eaf6; border-radius: 4px;
-            font-family: monospace; font-size: 0.8rem; color: #333;
+            display: inline-block;
+            padding: 0.15rem 0.5rem;
+            background: #e8eaf6;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 0.8rem;
+            color: #333;
         }
-        .proxy-tag.none { background: #f0f0f0; color: #999; font-style: italic; }
+
+        .proxy-tag.none {
+            background: #f0f0f0;
+            color: #999;
+            font-style: italic;
+        }
+
         .viewport-tag {
-            font-family: monospace; font-size: 0.8rem;
+            font-family: monospace;
+            font-size: 0.8rem;
             color: #667eea;
         }
     </style>
 </head>
+
 <body>
     <div class="header">
         <h1>TabShare Admin</h1>
@@ -77,7 +115,8 @@
             <div class="card">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
                     <div class="card-title" style="margin-bottom:0;">Browser Management</div>
-                    <button class="btn btn-primary btn-lg" onclick="showModal('createBrowserModal')">+ Add Browser</button>
+                    <button class="btn btn-primary btn-lg" onclick="showModal('createBrowserModal')">+ Add
+                        Browser</button>
                 </div>
                 <table>
                     <thead>
@@ -96,7 +135,8 @@
                 <div id="browserEmpty" class="empty-state" style="display:none;">
                     <div class="empty-state-icon">🖥️</div>
                     <div>No browsers configured</div>
-                    <button class="btn btn-primary btn-lg" style="margin-top:1rem;" onclick="showModal('createBrowserModal')">Add First Browser</button>
+                    <button class="btn btn-primary btn-lg" style="margin-top:1rem;"
+                        onclick="showModal('createBrowserModal')">Add First Browser</button>
                 </div>
             </div>
         </div>
@@ -164,7 +204,8 @@
                     </div>
                     <div class="form-group">
                         <label>Proxy (optional)</label>
-                        <input type="text" class="form-control" id="newProxy" placeholder="http://proxy:port or socks5://...">
+                        <input type="text" class="form-control" id="newProxy"
+                            placeholder="http://proxy:port or socks5://...">
                     </div>
                     <div class="form-group">
                         <label>Chrome Version</label>
@@ -177,7 +218,8 @@
                         <input type="text" class="form-control" id="newDataDir" placeholder="data/browsers/{id}">
                     </div>
                     <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" onclick="hideModal('createBrowserModal')">Cancel</button>
+                        <button type="button" class="btn btn-secondary"
+                            onclick="hideModal('createBrowserModal')">Cancel</button>
                         <button type="submit" class="btn btn-primary">Create</button>
                     </div>
                 </form>
@@ -192,20 +234,23 @@
                     <input type="hidden" id="newTabBrowserId">
                     <div class="form-group">
                         <label>URL</label>
-                        <input type="text" class="form-control" id="newTabUrl" value="https://www.google.com">
+                        <input type="text" class="form-control" id="newTabUrl" value="https://www.bing.com">
                     </div>
                     <div class="form-row">
                         <div class="form-group">
                             <label>Width</label>
-                            <input type="number" class="form-control" id="newTabWidth" value="1280" min="320" max="3840">
+                            <input type="number" class="form-control" id="newTabWidth" value="1280" min="320"
+                                max="3840">
                         </div>
                         <div class="form-group">
                             <label>Height</label>
-                            <input type="number" class="form-control" id="newTabHeight" value="720" min="240" max="2160">
+                            <input type="number" class="form-control" id="newTabHeight" value="720" min="240"
+                                max="2160">
                         </div>
                     </div>
                     <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" onclick="hideModal('createTabModal')">Cancel</button>
+                        <button type="button" class="btn btn-secondary"
+                            onclick="hideModal('createTabModal')">Cancel</button>
                         <button type="submit" class="btn btn-primary">Create</button>
                     </div>
                 </form>
@@ -224,7 +269,8 @@
                         <input type="text" class="form-control" id="navUrl" placeholder="https://...">
                     </div>
                     <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" onclick="hideModal('navigateModal')">Cancel</button>
+                        <button type="button" class="btn btn-secondary"
+                            onclick="hideModal('navigateModal')">Cancel</button>
                         <button type="submit" class="btn btn-primary">Go</button>
                     </div>
                 </form>
@@ -243,16 +289,19 @@
                     </div>
                     <div class="form-group">
                         <label>Proxy</label>
-                        <input type="text" class="form-control" id="editProxy" placeholder="http://proxy:port (empty to remove)">
+                        <input type="text" class="form-control" id="editProxy"
+                            placeholder="http://proxy:port (empty to remove)">
                     </div>
                     <div class="form-group">
-                        <label>Chrome Version <small style="color:#999">(changing regenerates fingerprint)</small></label>
+                        <label>Chrome Version <small style="color:#999">(changing regenerates
+                                fingerprint)</small></label>
                         <select class="form-control" id="editChromeVersion">
                             <option value="">Auto (real binary version)</option>
                         </select>
                     </div>
                     <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" onclick="hideModal('editBrowserModal')">Cancel</button>
+                        <button type="button" class="btn btn-secondary"
+                            onclick="hideModal('editBrowserModal')">Cancel</button>
                         <button type="submit" class="btn btn-primary">Save</button>
                     </div>
                 </form>
@@ -267,71 +316,71 @@
     </div>
 
     <script>
-    // ── Utils ──
-    function showModal(id) { document.getElementById(id).classList.add('show'); }
-    function hideModal(id) { document.getElementById(id).classList.remove('show'); }
-    function showToast(msg, type='') {
-        const t = document.getElementById('toast');
-        t.textContent = msg;
-        t.className = 'toast show ' + type;
-        setTimeout(() => t.className = 'toast', 3000);
-    }
+        // ── Utils ──
+        function showModal(id) { document.getElementById(id).classList.add('show'); }
+        function hideModal(id) { document.getElementById(id).classList.remove('show'); }
+        function showToast(msg, type = '') {
+            const t = document.getElementById('toast');
+            t.textContent = msg;
+            t.className = 'toast show ' + type;
+            setTimeout(() => t.className = 'toast', 3000);
+        }
 
-    async function api(method, path, body) {
-        const opts = { method, headers: {'Content-Type': 'application/json'} };
-        if (body) opts.body = JSON.stringify(body);
-        const res = await fetch(path, opts);
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || 'API error');
-        return data;
-    }
+        async function api(method, path, body) {
+            const opts = { method, headers: { 'Content-Type': 'application/json' } };
+            if (body) opts.body = JSON.stringify(body);
+            const res = await fetch(path, opts);
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'API error');
+            return data;
+        }
 
-    // ── Tab Navigation ──
-    document.querySelectorAll('.nav-btn[data-tab]').forEach(btn => {
-        btn.addEventListener('click', () => {
-            document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-            btn.classList.add('active');
-            document.getElementById(btn.dataset.tab).classList.add('active');
-            if (btn.dataset.tab === 'viewers') refreshViewers();
+        // ── Tab Navigation ──
+        document.querySelectorAll('.nav-btn[data-tab]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                btn.classList.add('active');
+                document.getElementById(btn.dataset.tab).classList.add('active');
+                if (btn.dataset.tab === 'viewers') refreshViewers();
+            });
         });
-    });
 
-    // ── Data Loading ──
-    let dashboardData = {};
+        // ── Data Loading ──
+        let dashboardData = {};
 
-    async function refreshData() {
-        try {
-            dashboardData = await api('GET', '/api/admin/dashboard');
-            renderDashboard();
-            renderBrowsers();
-            renderTabs();
-        } catch(e) {
-            showToast('Load failed: ' + e.message, 'error');
+        async function refreshData() {
+            try {
+                dashboardData = await api('GET', '/api/admin/dashboard');
+                renderDashboard();
+                renderBrowsers();
+                renderTabs();
+            } catch (e) {
+                showToast('Load failed: ' + e.message, 'error');
+            }
         }
-    }
 
-    function renderDashboard() {
-        const d = dashboardData;
-        document.getElementById('totalBrowsers').textContent = d.total_browsers || 0;
-        document.getElementById('runningBrowsers').textContent = d.running_browsers || 0;
-        document.getElementById('totalTabs').textContent = d.total_tabs || 0;
-        document.getElementById('totalViewers').textContent = d.total_viewers || 0;
-    }
-
-    function renderBrowsers() {
-        const list = document.getElementById('browserList');
-        const empty = document.getElementById('browserEmpty');
-        const browsers = dashboardData.browsers || [];
-
-        if (browsers.length === 0) {
-            list.innerHTML = '';
-            empty.style.display = 'block';
-            return;
+        function renderDashboard() {
+            const d = dashboardData;
+            document.getElementById('totalBrowsers').textContent = d.total_browsers || 0;
+            document.getElementById('runningBrowsers').textContent = d.running_browsers || 0;
+            document.getElementById('totalTabs').textContent = d.total_tabs || 0;
+            document.getElementById('totalViewers').textContent = d.total_viewers || 0;
         }
-        empty.style.display = 'none';
 
-        list.innerHTML = browsers.map(b => `
+        function renderBrowsers() {
+            const list = document.getElementById('browserList');
+            const empty = document.getElementById('browserEmpty');
+            const browsers = dashboardData.browsers || [];
+
+            if (browsers.length === 0) {
+                list.innerHTML = '';
+                empty.style.display = 'block';
+                return;
+            }
+            empty.style.display = 'none';
+
+            list.innerHTML = browsers.map(b => `
             <tr>
                 <td><strong>${b.browser_id}</strong></td>
                 <td>${b.name || '<em>unnamed</em>'}</td>
@@ -352,27 +401,27 @@
                 </td>
             </tr>
         `).join('');
-    }
-
-    function renderTabs() {
-        const list = document.getElementById('tabList');
-        const empty = document.getElementById('tabEmpty');
-        const browsers = dashboardData.browsers || [];
-        const allTabs = [];
-        browsers.forEach(b => (b.tabs || []).forEach(t => allTabs.push(t)));
-
-        if (allTabs.length === 0) {
-            list.innerHTML = '';
-            empty.style.display = 'block';
-            return;
         }
-        empty.style.display = 'none';
 
-        list.innerHTML = allTabs.map(t => {
-            const url = t.url || 'about:blank';
-            const shortUrl = url.length > 50 ? url.substring(0, 50) + '…' : url;
-            const vp = t.viewport || {width: 1280, height: 720};
-            return `
+        function renderTabs() {
+            const list = document.getElementById('tabList');
+            const empty = document.getElementById('tabEmpty');
+            const browsers = dashboardData.browsers || [];
+            const allTabs = [];
+            browsers.forEach(b => (b.tabs || []).forEach(t => allTabs.push(t)));
+
+            if (allTabs.length === 0) {
+                list.innerHTML = '';
+                empty.style.display = 'block';
+                return;
+            }
+            empty.style.display = 'none';
+
+            list.innerHTML = allTabs.map(t => {
+                const url = t.url || 'about:blank';
+                const shortUrl = url.length > 50 ? url.substring(0, 50) + '…' : url;
+                const vp = t.viewport || { width: 1280, height: 720 };
+                return `
             <tr>
                 <td><strong>${t.tab_id}</strong></td>
                 <td>${t.browser_id}</td>
@@ -384,157 +433,157 @@
                     <button class="btn btn-danger" onclick="deleteTab(${t.browser_id},${t.tab_id})">Close</button>
                 </td>
             </tr>`;
-        }).join('');
-    }
-
-    // ── Actions ──
-    async function createBrowser(e) {
-        e.preventDefault();
-        const body = {};
-        const name = document.getElementById('newBrowserName').value.trim();
-        const proxy = document.getElementById('newProxy').value.trim();
-        const dir = document.getElementById('newDataDir').value.trim();
-        const ver = document.getElementById('newChromeVersion').value;
-        if (name) body.name = name;
-        if (proxy) body.proxy = proxy;
-        if (dir) body.user_data_dir = dir;
-        if (ver) body.chrome_version = ver;
-        try {
-            await api('POST', '/api/admin/browsers', body);
-            hideModal('createBrowserModal');
-            showToast('Browser created', 'success');
-            document.getElementById('createBrowserForm').reset();
-            refreshData();
-        } catch(e) { showToast(e.message, 'error'); }
-    }
-
-    function showCreateTabModal(browserId) {
-        document.getElementById('newTabBrowserId').value = browserId;
-        showModal('createTabModal');
-    }
-
-    async function createTab(e) {
-        e.preventDefault();
-        const bid = document.getElementById('newTabBrowserId').value;
-        const body = {
-            url: document.getElementById('newTabUrl').value,
-            viewport_width: parseInt(document.getElementById('newTabWidth').value),
-            viewport_height: parseInt(document.getElementById('newTabHeight').value),
-        };
-        try {
-            await api('POST', `/api/admin/browsers/${bid}/tabs`, body);
-            hideModal('createTabModal');
-            showToast('Tab created', 'success');
-            refreshData();
-        } catch(e) { showToast(e.message, 'error'); }
-    }
-
-    function showNavigateModal(bid, tid, currentUrl) {
-        document.getElementById('navBrowserId').value = bid;
-        document.getElementById('navTabId').value = tid;
-        document.getElementById('navUrl').value = currentUrl;
-        showModal('navigateModal');
-    }
-
-    async function navigateTab(e) {
-        e.preventDefault();
-        const bid = document.getElementById('navBrowserId').value;
-        const tid = document.getElementById('navTabId').value;
-        const url = document.getElementById('navUrl').value;
-        try {
-            await api('POST', `/api/admin/browsers/${bid}/tabs/${tid}/navigate`, {url});
-            hideModal('navigateModal');
-            showToast('Navigated', 'success');
-            refreshData();
-        } catch(e) { showToast(e.message, 'error'); }
-    }
-
-    function showEditBrowserModal(bid, name, proxy, chromeVersion) {
-        document.getElementById('editBrowserId').value = bid;
-        document.getElementById('editName').value = name;
-        document.getElementById('editProxy').value = proxy;
-        document.getElementById('editChromeVersion').value = chromeVersion || '';
-        showModal('editBrowserModal');
-    }
-
-    async function updateBrowser(e) {
-        e.preventDefault();
-        const bid = document.getElementById('editBrowserId').value;
-        const name = document.getElementById('editName').value.trim();
-        const proxy = document.getElementById('editProxy').value.trim();
-        const ver = document.getElementById('editChromeVersion').value;
-        try {
-            await api('PUT', `/api/admin/browsers/${bid}`, {
-                name: name,
-                proxy: proxy || null,
-                chrome_version: ver || null,
-            });
-            hideModal('editBrowserModal');
-            showToast('Browser updated (restart to apply)', 'success');
-            refreshData();
-        } catch(e) { showToast(e.message, 'error'); }
-    }
-
-    async function launchBrowser(bid) {
-        try {
-            await api('POST', `/api/admin/browsers/${bid}/launch`);
-            showToast('Browser launching...', 'success');
-            setTimeout(refreshData, 2000);
-        } catch(e) { showToast(e.message, 'error'); }
-    }
-
-    async function closeBrowser(bid) {
-        if (!confirm(`Close browser ${bid} and all its tabs?`)) return;
-        try {
-            await api('POST', `/api/admin/browsers/${bid}/close`);
-            showToast('Browser closed', 'success');
-            refreshData();
-        } catch(e) { showToast(e.message, 'error'); }
-    }
-
-    async function deleteBrowser(bid) {
-        if (!confirm(`Delete browser ${bid}?`)) return;
-        try {
-            await api('DELETE', `/api/admin/browsers/${bid}`);
-            showToast('Browser deleted', 'success');
-            refreshData();
-        } catch(e) { showToast(e.message, 'error'); }
-    }
-
-    async function deleteTab(bid, tid) {
-        if (!confirm(`Close tab ${tid}?`)) return;
-        try {
-            await api('DELETE', `/api/admin/browsers/${bid}/tabs/${tid}`);
-            showToast('Tab closed', 'success');
-            refreshData();
-        } catch(e) { showToast(e.message, 'error'); }
-    }
-
-    // ── Viewers ──
-    let viewerData = [];
-
-    async function refreshViewers() {
-        try {
-            const data = await api('GET', '/api/admin/viewers');
-            viewerData = data.viewers || [];
-            renderViewers();
-        } catch(e) {
-            showToast('Failed to load viewers: ' + e.message, 'error');
+            }).join('');
         }
-    }
 
-    function renderViewers() {
-        const list = document.getElementById('viewerList');
-        const empty = document.getElementById('viewerEmpty');
-
-        if (viewerData.length === 0) {
-            list.innerHTML = '';
-            empty.style.display = 'block';
-            return;
+        // ── Actions ──
+        async function createBrowser(e) {
+            e.preventDefault();
+            const body = {};
+            const name = document.getElementById('newBrowserName').value.trim();
+            const proxy = document.getElementById('newProxy').value.trim();
+            const dir = document.getElementById('newDataDir').value.trim();
+            const ver = document.getElementById('newChromeVersion').value;
+            if (name) body.name = name;
+            if (proxy) body.proxy = proxy;
+            if (dir) body.user_data_dir = dir;
+            if (ver) body.chrome_version = ver;
+            try {
+                await api('POST', '/api/admin/browsers', body);
+                hideModal('createBrowserModal');
+                showToast('Browser created', 'success');
+                document.getElementById('createBrowserForm').reset();
+                refreshData();
+            } catch (e) { showToast(e.message, 'error'); }
         }
-        empty.style.display = 'none';
 
-        list.innerHTML = viewerData.map((v, i) => `
+        function showCreateTabModal(browserId) {
+            document.getElementById('newTabBrowserId').value = browserId;
+            showModal('createTabModal');
+        }
+
+        async function createTab(e) {
+            e.preventDefault();
+            const bid = document.getElementById('newTabBrowserId').value;
+            const body = {
+                url: document.getElementById('newTabUrl').value,
+                viewport_width: parseInt(document.getElementById('newTabWidth').value),
+                viewport_height: parseInt(document.getElementById('newTabHeight').value),
+            };
+            try {
+                await api('POST', `/api/admin/browsers/${bid}/tabs`, body);
+                hideModal('createTabModal');
+                showToast('Tab created', 'success');
+                refreshData();
+            } catch (e) { showToast(e.message, 'error'); }
+        }
+
+        function showNavigateModal(bid, tid, currentUrl) {
+            document.getElementById('navBrowserId').value = bid;
+            document.getElementById('navTabId').value = tid;
+            document.getElementById('navUrl').value = currentUrl;
+            showModal('navigateModal');
+        }
+
+        async function navigateTab(e) {
+            e.preventDefault();
+            const bid = document.getElementById('navBrowserId').value;
+            const tid = document.getElementById('navTabId').value;
+            const url = document.getElementById('navUrl').value;
+            try {
+                await api('POST', `/api/admin/browsers/${bid}/tabs/${tid}/navigate`, { url });
+                hideModal('navigateModal');
+                showToast('Navigated', 'success');
+                refreshData();
+            } catch (e) { showToast(e.message, 'error'); }
+        }
+
+        function showEditBrowserModal(bid, name, proxy, chromeVersion) {
+            document.getElementById('editBrowserId').value = bid;
+            document.getElementById('editName').value = name;
+            document.getElementById('editProxy').value = proxy;
+            document.getElementById('editChromeVersion').value = chromeVersion || '';
+            showModal('editBrowserModal');
+        }
+
+        async function updateBrowser(e) {
+            e.preventDefault();
+            const bid = document.getElementById('editBrowserId').value;
+            const name = document.getElementById('editName').value.trim();
+            const proxy = document.getElementById('editProxy').value.trim();
+            const ver = document.getElementById('editChromeVersion').value;
+            try {
+                await api('PUT', `/api/admin/browsers/${bid}`, {
+                    name: name,
+                    proxy: proxy || null,
+                    chrome_version: ver || null,
+                });
+                hideModal('editBrowserModal');
+                showToast('Browser updated (restart to apply)', 'success');
+                refreshData();
+            } catch (e) { showToast(e.message, 'error'); }
+        }
+
+        async function launchBrowser(bid) {
+            try {
+                await api('POST', `/api/admin/browsers/${bid}/launch`);
+                showToast('Browser launching...', 'success');
+                setTimeout(refreshData, 2000);
+            } catch (e) { showToast(e.message, 'error'); }
+        }
+
+        async function closeBrowser(bid) {
+            if (!confirm(`Close browser ${bid} and all its tabs?`)) return;
+            try {
+                await api('POST', `/api/admin/browsers/${bid}/close`);
+                showToast('Browser closed', 'success');
+                refreshData();
+            } catch (e) { showToast(e.message, 'error'); }
+        }
+
+        async function deleteBrowser(bid) {
+            if (!confirm(`Delete browser ${bid}?`)) return;
+            try {
+                await api('DELETE', `/api/admin/browsers/${bid}`);
+                showToast('Browser deleted', 'success');
+                refreshData();
+            } catch (e) { showToast(e.message, 'error'); }
+        }
+
+        async function deleteTab(bid, tid) {
+            if (!confirm(`Close tab ${tid}?`)) return;
+            try {
+                await api('DELETE', `/api/admin/browsers/${bid}/tabs/${tid}`);
+                showToast('Tab closed', 'success');
+                refreshData();
+            } catch (e) { showToast(e.message, 'error'); }
+        }
+
+        // ── Viewers ──
+        let viewerData = [];
+
+        async function refreshViewers() {
+            try {
+                const data = await api('GET', '/api/admin/viewers');
+                viewerData = data.viewers || [];
+                renderViewers();
+            } catch (e) {
+                showToast('Failed to load viewers: ' + e.message, 'error');
+            }
+        }
+
+        function renderViewers() {
+            const list = document.getElementById('viewerList');
+            const empty = document.getElementById('viewerEmpty');
+
+            if (viewerData.length === 0) {
+                list.innerHTML = '';
+                empty.style.display = 'block';
+                return;
+            }
+            empty.style.display = 'none';
+
+            list.innerHTML = viewerData.map((v, i) => `
             <tr>
                 <td><code>${v.client_host}:${v.client_port}</code></td>
                 <td>
@@ -546,36 +595,37 @@
                 </td>
             </tr>
         `).join('');
-    }
+        }
 
-    async function kickViewer(browserId, tabId, idx) {
-        if (!confirm('Disconnect this viewer?')) return;
-        try {
-            await api('DELETE', `/api/admin/viewers/${browserId}/${tabId}/${idx}`);
-            showToast('Viewer kicked', 'success');
-            refreshViewers();
-        } catch(e) { showToast(e.message, 'error'); }
-    }
+        async function kickViewer(browserId, tabId, idx) {
+            if (!confirm('Disconnect this viewer?')) return;
+            try {
+                await api('DELETE', `/api/admin/viewers/${browserId}/${tabId}/${idx}`);
+                showToast('Viewer kicked', 'success');
+                refreshViewers();
+            } catch (e) { showToast(e.message, 'error'); }
+        }
 
-    // ── Chrome Versions ──
-    async function loadChromeVersions() {
-        try {
-            const data = await api('GET', '/api/admin/chrome-versions');
-            const selects = ['newChromeVersion', 'editChromeVersion'];
-            selects.forEach(id => {
-                const sel = document.getElementById(id);
-                sel.innerHTML = `<option value="">Auto (${data.real_version})</option>`;
-                data.available_versions.forEach(v => {
-                    sel.innerHTML += `<option value="${v}">${v}</option>`;
+        // ── Chrome Versions ──
+        async function loadChromeVersions() {
+            try {
+                const data = await api('GET', '/api/admin/chrome-versions');
+                const selects = ['newChromeVersion', 'editChromeVersion'];
+                selects.forEach(id => {
+                    const sel = document.getElementById(id);
+                    sel.innerHTML = `<option value="">Auto (${data.real_version})</option>`;
+                    data.available_versions.forEach(v => {
+                        sel.innerHTML += `<option value="${v}">${v}</option>`;
+                    });
                 });
-            });
-        } catch(e) { console.warn('Failed to load chrome versions', e); }
-    }
+            } catch (e) { console.warn('Failed to load chrome versions', e); }
+        }
 
-    // ── Init ──
-    loadChromeVersions();
-    refreshData();
-    setInterval(refreshData, 10000);
+        // ── Init ──
+        loadChromeVersions();
+        refreshData();
+        setInterval(refreshData, 10000);
     </script>
 </body>
+
 </html>

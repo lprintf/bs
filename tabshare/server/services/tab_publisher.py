@@ -109,7 +109,7 @@ class TabPublisher:
             room = self.tab_id
 
             # Step 1: 在浏览器里获取 getDisplayMedia + createOffer (不涉及网络)
-            # SDP munging: 删除非 H.264 的 video codec，强制 Chrome 使用 H.264 (VAAPI 硬编码)
+            # SDP munging: 强制 H.264 High Profile (profile-level-id=64xxxx)
             offer_sdp = await self.page.evaluate("""async () => {
                 window._webrtc = window._webrtc || {};
 
@@ -118,16 +118,17 @@ class TabPublisher:
                     try { window._webrtc.pc.close(); } catch(e) {}
                 }
 
-                // SDP munging: keep only H.264 video codecs
-                function forceH264(sdp) {
+                // SDP munging: keep only H.264, prefer High Profile (64xxxx)
+                function forceH264High(sdp) {
                     const lines = sdp.split('\\r\\n');
                     const result = [];
                     let inVideo = false;
-                    let videoMLine = null;
                     const h264PTs = new Set();
+                    const highPTs = new Set(); // High Profile PTs
                     const removePTs = new Set();
+                    const ptToFmtp = {};
 
-                    // First pass: find H.264 vs non-H.264 payload types
+                    // First pass: find H.264 payload types
                     for (const line of lines) {
                         if (line.startsWith('m=video')) {
                             inVideo = true;
@@ -145,42 +146,56 @@ class TabPublisher:
                                     removePTs.add(pt);
                                 }
                             }
+                            // Track fmtp for profile detection
+                            const fmtpMatch = line.match(/^a=fmtp:(\\d+)\\s+(.*)/);
+                            if (fmtpMatch) {
+                                ptToFmtp[fmtpMatch[1]] = fmtpMatch[2];
+                            }
                         }
                     }
 
-                    // If no H.264 found, return original SDP
+                    // Identify High Profile H.264 PTs (profile-level-id starts with 64)
+                    for (const pt of h264PTs) {
+                        const fmtp = ptToFmtp[pt] || '';
+                        const plMatch = fmtp.match(/profile-level-id=([0-9a-fA-F]+)/);
+                        if (plMatch && plMatch[1].startsWith('64')) {
+                            highPTs.add(pt);
+                        }
+                    }
+
+                    // If no H.264 found, return original
                     if (h264PTs.size === 0) return sdp;
 
-                    // Also find associated apt (RTX) payload types to remove
+                    // Find associated RTX payload types to remove
                     for (const line of lines) {
-                        const fmtpMatch = line.match(/^a=fmtp:(\\d+)\\s+apt=(\\d+)/);
-                        if (fmtpMatch) {
-                            const pt = fmtpMatch[1];
-                            const apt = fmtpMatch[2];
+                        const aptMatch = line.match(/^a=fmtp:(\\d+)\\s+apt=(\\d+)/);
+                        if (aptMatch) {
+                            const pt = aptMatch[1];
+                            const apt = aptMatch[2];
                             if (removePTs.has(apt)) {
                                 removePTs.add(pt);
                             }
                         }
                     }
 
-                    // Second pass: filter
+                    // Second pass: filter and reorder (High Profile PTs first)
                     inVideo = false;
                     for (const line of lines) {
                         if (line.startsWith('m=video')) {
                             inVideo = true;
-                            // Rewrite m= line to only include H.264 payload types
                             const parts = line.split(' ');
-                            const filtered = parts.slice(0, 3).concat(
-                                parts.slice(3).filter(pt => !removePTs.has(pt))
-                            );
-                            result.push(filtered.join(' '));
+                            const keepPTs = parts.slice(3).filter(pt => !removePTs.has(pt));
+                            // Reorder: High Profile first, then other H.264
+                            const highFirst = keepPTs.filter(pt => highPTs.has(pt));
+                            const rest = keepPTs.filter(pt => !highPTs.has(pt));
+                            const reordered = parts.slice(0, 3).concat(highFirst, rest);
+                            result.push(reordered.join(' '));
                             continue;
                         } else if (line.startsWith('m=') && !line.startsWith('m=video')) {
                             inVideo = false;
                         }
 
                         if (inVideo) {
-                            // Skip lines referencing removed payload types
                             const ptMatch = line.match(/^a=(?:rtpmap|fmtp|rtcp-fb):(\\d+)/);
                             if (ptMatch && removePTs.has(ptMatch[1])) continue;
                         }
@@ -199,15 +214,10 @@ class TabPublisher:
                         preferCurrentTab: true
                     });
 
-                    // 告诉编码器这是屏幕内容（文字/细节优先）
+                    // 告诉编码器这是屏幕内容（文字/细节始终优先）
                     stream.getVideoTracks().forEach(t => {
                         t.contentHint = 'detail';
                     });
-
-                    // 暴露 contentHint 切换 API：滚动时 motion（保帧率），静止时 detail（保清晰度）
-                    window.__setContentHint = (hint) => {
-                        stream.getVideoTracks().forEach(t => { t.contentHint = hint; });
-                    };
 
                     const pc = new RTCPeerConnection({
                         iceServers: [],
@@ -222,17 +232,35 @@ class TabPublisher:
                             params.encodings[0].maxFramerate = 60;
                             sender.setParameters(params).catch(() => {});
                         }
-                        // 编码器压力大时降分辨率而不是掉帧
-                        sender.getParameters().degradationPreference = 'maintain-framerate';
                     });
 
                     const offer = await pc.createOffer();
-                    // Munge SDP to force H.264
-                    const h264Sdp = forceH264(offer.sdp);
+                    // Munge SDP: H.264 only, High Profile (64xxxx) preferred
+                    const h264Sdp = forceH264High(offer.sdp);
                     await pc.setLocalDescription({type: 'offer', sdp: h264Sdp});
 
                     window._webrtc.stream = stream;
                     window._webrtc.pc = pc;
+
+                    // 定期采集编码器质量诊断
+                    window._webrtc._statsInterval = setInterval(async () => {
+                        try {
+                            const stats = await pc.getStats();
+                            stats.forEach(r => {
+                                if (r.type === 'outbound-rtp' && r.kind === 'video') {
+                                    console.log('[encoder-stats]',
+                                        'qlr=' + (r.qualityLimitationReason || 'none'),
+                                        'targetBitrate=' + Math.round((r.targetBitrate||0)/1000) + 'kbps',
+                                        'encoderImpl=' + (r.encoderImplementation || '?'),
+                                        'fps=' + (r.framesPerSecond || 0),
+                                        'keyFrames=' + (r.keyFramesEncoded || 0),
+                                        'totalFrames=' + (r.framesEncoded || 0),
+                                        'qpSum=' + (r.qpSum || 0)
+                                    );
+                                }
+                            });
+                        } catch(e) {}
+                    }, 3000);
 
                     return pc.localDescription.sdp;
                 } catch(e) {

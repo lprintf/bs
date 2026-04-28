@@ -36,3 +36,6 @@ Thumbs.db
 *.swp
 *.swo
 .claude/
+# Deck shell output (auto-generated)
+.deck-shell/
+tabshare/https:/
