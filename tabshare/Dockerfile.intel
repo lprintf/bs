@@ -6,9 +6,13 @@ USER root
 
 # 安装:
 # - Intel iHD 驱动 (VAAPI H.264 硬件编码)
+#   使用 Intel Graphics PPA 获取最新驱动，支持 Arrow Lake (Xe2) 等新架构
 # - Mesa Vulkan 驱动 (Chrome ANGLE Vulkan → WebGL 2.0 硬件渲染)
 # - dbus (Chrome GPU 初始化需要)
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    software-properties-common gnupg \
+    && add-apt-repository -y ppa:kobuk-team/intel-graphics \
+    && apt-get update && apt-get install -y --no-install-recommends \
     intel-media-va-driver-non-free \
     libigdgmm12 \
     vainfo \
@@ -17,6 +21,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgles2 \
     libgl1-mesa-dri \
     dbus \
+    && apt-get purge -y software-properties-common gnupg \
+    && apt-get autoremove -y \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # 指定 VA-API 驱动

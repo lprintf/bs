@@ -18,6 +18,9 @@ case "$GPU_TYPE" in
     docker compose build tabshare
     docker build -f tabshare/Dockerfile.intel -t bs-tabshare-intel .
     
+    # 自动检测 render group GID
+    export RENDER_GID=$(stat -c '%g' /dev/dri/renderD128 2>/dev/null || echo 992)
+    echo "🎮 Render GID: $RENDER_GID"
     export TABSHARE_IMAGE="bs-tabshare-intel"
     COMPOSE_OPTS+=("-f" "docker-compose.gpu.yml")
     ;;

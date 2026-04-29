@@ -6,6 +6,6 @@ services:
     devices:
       - /dev/dri:/dev/dri
     group_add:
-      - "992"   # render group (renderD128)
+      - "${RENDER_GID:-992}"   # render group GID (auto-detect via start.sh)
     environment:
       - USE_HARDWARE_GPU=true

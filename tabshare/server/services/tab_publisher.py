@@ -12,6 +12,7 @@ class TabPublisher:
         self.page = page
         self.tab_id = room_name  # room_name = "{browser_id}_{tab_id}"
         self._closed = False
+        self._paused = True  # 初始暂停，等 viewer 连接后再推流
         self._nav_task: asyncio.Task | None = None
         self._publish_task: asyncio.Task | None = None
 
@@ -24,24 +25,54 @@ class TabPublisher:
         return int(self.tab_id.split('_')[1])
 
     async def start(self):
-        print(f"TabPublisher[{self.tab_id}]: starting...")
+        """注册导航监听，但不立即推流（等待 viewer 连接）"""
+        print(f"TabPublisher[{self.tab_id}]: registered (paused, waiting for viewers)")
         self.page.on("framenavigated", self._on_navigated)
-        # 初次尝试，如果失败则后台持续重试
-        if not await self._ensure_stream():
-            asyncio.ensure_future(self._retry_loop())
+        # 不立即推流，由 resume() 触发
 
     async def _retry_loop(self):
-        """后台持续重试 publish，直到成功或关闭"""
+        """后台持续重试 publish，直到成功、关闭或暂停"""
         delay = 3
-        while not self._closed:
+        while not self._closed and not self._paused:
             await asyncio.sleep(delay)
-            if self._closed:
+            if self._closed or self._paused:
                 return
             print(f"TabPublisher[{self.tab_id}]: retry publish...")
             if await self._ensure_stream():
                 print(f"TabPublisher[{self.tab_id}]: retry succeeded")
                 return
             delay = min(delay + 2, 15)  # 逐步增大间隔，最大 15s
+
+    async def resume(self):
+        """有 viewer 连接时恢复推流"""
+        if self._closed or not self._paused:
+            return
+        self._paused = False
+        print(f"TabPublisher[{self.tab_id}]: resuming (viewer connected)")
+        if not await self._ensure_stream():
+            asyncio.ensure_future(self._retry_loop())
+
+    async def pause(self):
+        """所有 viewer 断开后暂停推流，释放编码器资源"""
+        if self._closed or self._paused:
+            return
+        self._paused = True
+        self._cancel_publish()
+        print(f"TabPublisher[{self.tab_id}]: pausing (no viewers)")
+        try:
+            await self.page.evaluate("""() => {
+                if (window._webrtc) {
+                    if (window._webrtc.pc) { try { window._webrtc.pc.close(); } catch(e) {} }
+                    if (window._webrtc.stream) {
+                        window._webrtc.stream.getTracks().forEach(t => t.stop());
+                    }
+                    window._webrtc.ready = false;
+                    window._webrtc.pc = null;
+                    window._webrtc.stream = null;
+                }
+            }""")
+        except Exception as e:
+            print(f"TabPublisher[{self.tab_id}]: pause cleanup error: {e}")
 
     def _on_navigated(self, frame):
         if frame == self.page.main_frame:
@@ -51,7 +82,7 @@ class TabPublisher:
             self._nav_task = asyncio.ensure_future(self._handle_navigation())
 
     async def _handle_navigation(self):
-        if self._closed:
+        if self._closed or self._paused:
             return
         self._cancel_publish()
         # Immediately notify viewers

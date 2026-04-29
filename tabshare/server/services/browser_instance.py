@@ -29,7 +29,7 @@ BASE_ARGS = [
 # Chrome headless=new 自带虚拟显示，ANGLE Vulkan 通过 render node 直接用 GPU
 # 不需要 Weston/Wayland compositor
 GPU_ACCEL_ARGS = [
-    "--enable-features=VaapiVideoDecoder,AcceleratedVideoEncoder,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL,Vulkan,PassiveEventListenersByDefault",
+    "--enable-features=VaapiVideoDecoder,VaapiVideoEncoder,VaapiIgnoreDriverChecks,VaapiVideoEncodeLinuxGL,AcceleratedVideoEncoder,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL,Vulkan,PassiveEventListenersByDefault",
     "--disable-features=UseChromeOSDirectVideoDecoder",
     "--enable-accelerated-video-decode",
     "--use-gl=angle",
