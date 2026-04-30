@@ -939,16 +939,41 @@
                 // Skip unknown keys from IME (but NOT keyCode 229 — unreliable on fcitx/ibus)
                 if (e.key === 'Process' || e.key === 'Unidentified') return;
 
-                sendInput({ type: 'keyboard', eventType: 'keyDown', key: e.key, code: e.code });
-                if (e.key === 'Backspace' || e.key === 'Tab') {
-                    e.preventDefault();
+                // Functional keys (length > 1): send immediately
+                if (e.key.length > 1) {
+                    sendInput({ type: 'keyboard', eventType: 'keyDown', key: e.key, code: e.code });
+                    if (e.key === 'Backspace' || e.key === 'Tab') {
+                        e.preventDefault();
+                    }
+                    return;
                 }
+
+                // Printable characters: defer 1 frame to let compositionstart fire first
+                // (macOS fires keydown BEFORE compositionstart)
+                const key = e.key, code = e.code;
+                requestAnimationFrame(() => {
+                    if (!isComposing) {
+                        sendInput({ type: 'keyboard', eventType: 'keyDown', key, code });
+                    }
+                });
             });
 
             imeTrap.addEventListener('keyup', (e) => {
                 if (e.isComposing || isComposing) return;
                 if (e.key === 'Process' || e.key === 'Unidentified') return;
-                sendInput({ type: 'keyboard', eventType: 'keyUp', key: e.key, code: e.code });
+
+                if (e.key.length > 1) {
+                    sendInput({ type: 'keyboard', eventType: 'keyUp', key: e.key, code: e.code });
+                    return;
+                }
+
+                // Defer printable keyup to match deferred keydown
+                const key = e.key, code = e.code;
+                requestAnimationFrame(() => {
+                    if (!isComposing) {
+                        sendInput({ type: 'keyboard', eventType: 'keyUp', key, code });
+                    }
+                });
             });
 
             // Ensure the trap stays focused (but not when toolbar is active)
