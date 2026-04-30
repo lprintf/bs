@@ -25,6 +25,28 @@ BASE_ARGS = [
     "--unsafely-treat-insecure-origin-as-secure=http://127.0.0.1:8088",
 ]
 
+# 硬件加速参数 — headless=new + ANGLE Vulkan
+# Chrome headless=new 自带虚拟显示，ANGLE Vulkan 通过 render node 直接用 GPU
+# 不需要 Weston/Wayland compositor
+GPU_ACCEL_ARGS = [
+    "--enable-features=VaapiVideoDecoder,VaapiVideoEncoder,VaapiIgnoreDriverChecks,VaapiVideoEncodeLinuxGL,AcceleratedVideoEncoder,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL,Vulkan,PassiveEventListenersByDefault",
+    "--disable-features=UseChromeOSDirectVideoDecoder",
+    "--enable-accelerated-video-decode",
+    "--use-gl=angle",
+    "--use-angle=vulkan",
+    "--enable-gpu-rasterization",
+    "--enable-zero-copy",
+    "--disable-gpu-sandbox",
+    "--ignore-gpu-blocklist",
+    # headless 帧率
+    "--disable-gpu-vsync",
+    # 多核光栅化: 复杂页面滚动时并行绘制 tile
+    "--num-raster-threads=8",
+    "--enable-oop-rasterization",
+    # 滚动优化
+    "--enable-smooth-scrolling",
+]
+
 _SUPPRESSED_LOGS = ["Failed to execute 'postMessage' on 'DOMWindow'"]
 
 DEFAULT_VIEWPORT = {"width": 1280, "height": 720}
@@ -156,24 +178,43 @@ class BrowserInstance:
 
             # 3. 构建启动参数
             launch_args = BASE_ARGS.copy()
+            use_gpu = os.environ.get("USE_HARDWARE_GPU", "").lower() == "true"
             
-            # CPU 模式下强制使用 SwiftShader 软件渲染，否则使用硬件加速
-            if os.environ.get("USE_HARDWARE_GPU", "").lower() != "true":
+            # GPU 模式：VAAPI 硬件编码加速；CPU 模式：SwiftShader 软件渲染
+            if use_gpu:
+                launch_args.extend(GPU_ACCEL_ARGS)
+                print(f"[Browser {self.browser_id}] GPU acceleration enabled (VAAPI)")
+            else:
                 launch_args.extend([
                     "--use-gl=angle",
                     "--use-angle=swiftshader-webgl"
                 ])
             launch_args.append(f"--lang={self.fingerprint.locale}")
 
+            # Extension: 原生 DOM 事件注入（绕过 CDP 主线程）
+            ext_dir = str(Path(__file__).parent.parent.parent / "extension")
+            if Path(ext_dir).exists():
+                launch_args.append(f"--disable-extensions-except={ext_dir}")
+                launch_args.append(f"--load-extension={ext_dir}")
+                print(f"[Browser {self.browser_id}] Input extension loaded: {ext_dir}")
+
             # 4. launch_persistent_context
             self.playwright = await async_playwright().start()
 
+            # headless 策略: GPU 和 CPU 模式都用 headless
+            # GPU 模式用 headless=new + ANGLE Vulkan 直接访问 GPU render node
+            ignore_args = ["--enable-automation"]
+            use_headless = True
+
+            if use_gpu:
+                print(f"[Browser {self.browser_id}] GPU mode: headless + ANGLE Vulkan + VAAPI H.264")
+
             launch_kwargs = {
                 "user_data_dir": str(profile_dir),
-                "headless": True,  # rebrowser-playwright 自动处理 UA/sec-ch-ua 一致性
+                "headless": use_headless,
                 "chromium_sandbox": True,
                 "args": launch_args,
-                "ignore_default_args": ["--enable-automation"],
+                "ignore_default_args": ignore_args,
                 "user_agent": self.fingerprint.user_agent,
                 "locale": self.fingerprint.locale,
                 "timezone_id": self.fingerprint.timezone,
@@ -215,8 +256,16 @@ class BrowserInstance:
                 await self._apply_ua_metadata(page)
 
             # 关闭 persistent context 自带的空白页
-            for page in self.context.pages:
-                if page.url in ("about:blank", "chrome://newtab/"):
+            # 非 headless 模式 (Xvfb GPU) 必须保留至少一个页面，否则 Chrome 退出
+            blank_pages = [p for p in self.context.pages
+                           if p.url in ("about:blank", "chrome://newtab/")]
+            if use_headless:
+                # headless 模式: 安全关闭所有空白页
+                for page in blank_pages:
+                    await page.close()
+            elif len(blank_pages) > 1:
+                # 非 headless: 保留一个空白页作为 keepalive
+                for page in blank_pages[1:]:
                     await page.close()
 
             self.status = "idle"

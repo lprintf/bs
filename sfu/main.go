@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
-	"time"
 
 	"github.com/pion/ice/v4"
 	"github.com/pion/rtcp"
@@ -84,6 +84,68 @@ func main() {
 
 	log.Printf("SFU starting: NAT_IP=%s UDP_PORT=%d HTTP_PORT=%d", natIP, udpPort, httpPort)
 
+	// --- MediaEngine: register H.264 + VP9 + AV1 ---
+	// Publisher SDP munging controls which codec is actually used.
+	// SFU just needs to support all options for flexibility.
+	me := &webrtc.MediaEngine{}
+	for _, codec := range []webrtc.RTPCodecParameters{
+		// H.264 High Profile (preferred for VAAPI)
+		{
+			RTPCodecCapability: webrtc.RTPCodecCapability{
+				MimeType:    webrtc.MimeTypeH264,
+				ClockRate:   90000,
+				SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=640032",
+			},
+			PayloadType: 123,
+		},
+		// H.264 Constrained Baseline (fallback)
+		{
+			RTPCodecCapability: webrtc.RTPCodecCapability{
+				MimeType:    webrtc.MimeTypeH264,
+				ClockRate:   90000,
+				SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f",
+			},
+			PayloadType: 125,
+		},
+		{
+			RTPCodecCapability: webrtc.RTPCodecCapability{
+				MimeType:    webrtc.MimeTypeH264,
+				ClockRate:   90000,
+				SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f",
+			},
+			PayloadType: 102,
+		},
+		{
+			RTPCodecCapability: webrtc.RTPCodecCapability{
+				MimeType:    webrtc.MimeTypeH264,
+				ClockRate:   90000,
+				SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42001f",
+			},
+			PayloadType: 127,
+		},
+		// VP9
+		{
+			RTPCodecCapability: webrtc.RTPCodecCapability{
+				MimeType:  webrtc.MimeTypeVP9,
+				ClockRate: 90000,
+			},
+			PayloadType: 98,
+		},
+		// AV1
+		{
+			RTPCodecCapability: webrtc.RTPCodecCapability{
+				MimeType:  webrtc.MimeTypeAV1,
+				ClockRate: 90000,
+			},
+			PayloadType: 35,
+		},
+	} {
+		if err := me.RegisterCodec(codec, webrtc.RTPCodecTypeVideo); err != nil {
+			log.Fatalf("Failed to register codec: %v", err)
+		}
+	}
+	log.Printf("MediaEngine: H.264 + VP9 + AV1 registered (publisher SDP controls selection)")
+
 	// --- pion SettingEngine ---
 	se := webrtc.SettingEngine{}
 	se.SetLite(true)
@@ -101,7 +163,10 @@ func main() {
 		webrtc.NetworkTypeUDP4,
 	})
 
-	api = webrtc.NewAPI(webrtc.WithSettingEngine(se))
+	api = webrtc.NewAPI(
+		webrtc.WithMediaEngine(me),
+		webrtc.WithSettingEngine(se),
+	)
 
 	log.Printf("ICE Lite enabled, NAT 1:1 → %s, UDP+TCP mux on :%d", natIP, udpPort)
 
@@ -185,11 +250,19 @@ func handlePublisher(room *Room, offer webrtc.SessionDescription) (*webrtc.Sessi
 		return nil, fmt.Errorf("new pc: %w", err)
 	}
 
-	// Reuse existing track (subscribers stay connected)
+	// Detect preferred codec from offer SDP
+	preferredMime := webrtc.MimeTypeH264 // default
+	if strings.Contains(offer.SDP, "VP9/90000") && !strings.Contains(offer.SDP, "H264/90000") {
+		preferredMime = webrtc.MimeTypeVP9
+	} else if strings.Contains(offer.SDP, "AV1/90000") && !strings.Contains(offer.SDP, "H264/90000") && !strings.Contains(offer.SDP, "VP9/90000") {
+		preferredMime = webrtc.MimeTypeAV1
+	}
+
+	// Create or reuse track (subscribers stay connected)
 	room.mu.Lock()
-	if room.videoTrack == nil {
+	if room.videoTrack == nil || room.videoTrack.Codec().MimeType != preferredMime {
 		vt, vtErr := webrtc.NewTrackLocalStaticRTP(
-			webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8},
+			webrtc.RTPCodecCapability{MimeType: preferredMime},
 			"video", "tabshare",
 		)
 		if vtErr != nil {
@@ -197,8 +270,8 @@ func handlePublisher(room *Room, offer webrtc.SessionDescription) (*webrtc.Sessi
 			return nil, fmt.Errorf("new track: %w", vtErr)
 		}
 		room.videoTrack = vt
+		log.Printf("[pub] created local track: codec=%s", preferredMime)
 	}
-	videoTrack := room.videoTrack
 	oldPC := room.publisher
 	room.publisher = pc
 	// Signal sequence reset for next RTP packet
@@ -211,27 +284,38 @@ func handlePublisher(room *Room, offer webrtc.SessionDescription) (*webrtc.Sessi
 	}
 
 	pc.OnTrack(func(remoteTrack *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
-		log.Printf("[pub] got track: %s codec=%s", remoteTrack.ID(), remoteTrack.Codec().MimeType)
+		codecMime := remoteTrack.Codec().MimeType
+		log.Printf("[pub] got track: %s codec=%s", remoteTrack.ID(), codecMime)
 
-		// Send periodic PLI to ensure regular keyframes
+		// Update track if actual codec differs from what we predicted
+		room.mu.Lock()
+		if room.videoTrack.Codec().MimeType != codecMime {
+			vt, vtErr := webrtc.NewTrackLocalStaticRTP(
+				webrtc.RTPCodecCapability{MimeType: codecMime},
+				"video", "tabshare",
+			)
+			if vtErr != nil {
+				room.mu.Unlock()
+				log.Printf("[pub] failed to recreate track for %s: %v", codecMime, vtErr)
+				return
+			}
+			room.videoTrack = vt
+			log.Printf("[pub] updated local track: codec=%s", codecMime)
+		}
+		videoTrack := room.videoTrack
+		room.mu.Unlock()
+
+		// Send a single PLI at start for quick first-frame, no periodic PLI
+		// (periodic PLI causes stuttering from oversized I-frames)
 		go func() {
-			ticker := time.NewTicker(2 * time.Second)
-			defer ticker.Stop()
 			pc.WriteRTCP([]rtcp.Packet{
 				&rtcp.PictureLossIndication{MediaSSRC: uint32(remoteTrack.SSRC())},
 			})
-			for range ticker.C {
-				if pc.ConnectionState() != webrtc.PeerConnectionStateConnected {
-					return
-				}
-				pc.WriteRTCP([]rtcp.Packet{
-					&rtcp.PictureLossIndication{MediaSSRC: uint32(remoteTrack.SSRC())},
-				})
-			}
 		}()
 
 		// Read RTP, rewrite seq/ts for continuity, forward to local track
-		buf := make([]byte, 4096)
+		buf := make([]byte, 65535)
+		var pktCount, kfCount uint64
 		for {
 			n, _, readErr := remoteTrack.Read(buf)
 			if readErr != nil {
@@ -270,6 +354,32 @@ func handlePublisher(room *Room, offer webrtc.SessionDescription) (*webrtc.Sessi
 				}
 				copy(clonedPkt.Payload, pkt.Payload)
 				rec.PushRTP(clonedPkt)
+			}
+
+			// H.264 keyframe detection: NAL type 5 = IDR frame
+			pktCount++
+			if len(pkt.Payload) > 0 {
+				nalType := pkt.Payload[0] & 0x1F
+				if nalType == 5 { // IDR = keyframe
+					kfCount++
+				} else if nalType == 24 && len(pkt.Payload) > 3 {
+					// STAP-A: check first NAL unit inside
+					innerNalType := pkt.Payload[3] & 0x1F
+					if innerNalType == 5 {
+						kfCount++
+					}
+				} else if nalType == 28 && len(pkt.Payload) > 1 {
+					// FU-A: check start bit + NAL type
+					fuHeader := pkt.Payload[1]
+					isStart := (fuHeader & 0x80) != 0
+					fuNalType := fuHeader & 0x1F
+					if isStart && fuNalType == 5 {
+						kfCount++
+					}
+				}
+			}
+			if pktCount%300 == 0 {
+				log.Printf("[pub] RTP stats: %d pkts, %d keyframes (%.1f%%)", pktCount, kfCount, float64(kfCount)/float64(pktCount)*100)
 			}
 
 			if writeErr := videoTrack.WriteRTP(pkt); writeErr != nil {
@@ -328,13 +438,15 @@ func handleSubscriber(room *Room, roomName string, offer webrtc.SessionDescripti
 	subID := nextSubID()
 	sub := &Subscriber{pc: pc, sender: rtpSender, room: roomName}
 
-	// Read RTCP (PLI, NACK etc.) from viewer
+	// Read RTCP (PLI, NACK etc.) from viewer and forward to publisher
 	go func() {
 		buf := make([]byte, 1500)
 		for {
 			if _, _, rtcpErr := rtpSender.Read(buf); rtcpErr != nil {
 				return
 			}
+			// Forward PLI/NACK to publisher for better encoding adaptation
+			sendPLI(room)
 		}
 	}()
 

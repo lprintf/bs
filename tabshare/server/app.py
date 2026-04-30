@@ -8,6 +8,7 @@ from server.api import ws, management
 from server.config import SFU_URL
 from contextlib import asynccontextmanager
 import httpx
+import os
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -116,6 +117,126 @@ async def eval_js(browser_id: int, tab_id: int, request: Request):
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
+@app.get("/api/gpu-info/{browser_id}/{tab_id}")
+async def gpu_info(browser_id: int, tab_id: int):
+    """Debug: 获取 Chrome GPU/WebGL + WebRTC 编码器信息"""
+    tab = browser_manager.find_tab(browser_id, tab_id)
+    if not tab:
+        return JSONResponse({"error": "Tab not found"}, status_code=404)
+    try:
+        # WebGL 信息
+        js_info = await tab.page.evaluate("""() => {
+            const info = {};
+            const c = document.createElement('canvas');
+            for (const ctx of ['webgl2', 'webgl', 'experimental-webgl']) {
+                const gl = c.getContext(ctx, {failIfMajorPerformanceCaveat: false});
+                if (gl) {
+                    info.context = ctx;
+                    info.renderer = gl.getParameter(gl.RENDERER);
+                    info.vendor = gl.getParameter(gl.VENDOR);
+                    info.version = gl.getParameter(gl.VERSION);
+                    info.shadingLanguage = gl.getParameter(gl.SHADING_LANGUAGE_VERSION);
+                    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+                    if (ext) {
+                        info.unmaskedRenderer = gl.getParameter(ext.UNMASKED_RENDERER_WEBGL);
+                        info.unmaskedVendor = gl.getParameter(ext.UNMASKED_VENDOR_WEBGL);
+                    }
+                    break;
+                }
+            }
+            if (!info.context) info.error = 'No WebGL context available';
+            info.hardwareConcurrency = navigator.hardwareConcurrency;
+            info.platform = navigator.platform;
+            return info;
+        }""")
+
+        # WebRTC encoder stats
+        encoder_info = await _get_encoder_stats(tab)
+
+        return {"webgl": js_info, "encoder": encoder_info}
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def _get_encoder_stats(tab) -> dict:
+    """从 tab 的 WebRTC PeerConnection 中提取编码器状态"""
+    try:
+        return await tab.page.evaluate("""async () => {
+            if (!window._webrtc || !window._webrtc.pc) {
+                return { error: 'No WebRTC PeerConnection' };
+            }
+            const pc = window._webrtc.pc;
+            const result = {
+                iceState: pc.iceConnectionState,
+                signalingState: pc.signalingState,
+            };
+            try {
+                const stats = await pc.getStats();
+                stats.forEach(r => {
+                    if (r.type === 'outbound-rtp' && r.kind === 'video') {
+                        result.encoderImplementation = r.encoderImplementation || 'unknown';
+                        result.qualityLimitationReason = r.qualityLimitationReason || 'none';
+                        result.targetBitrate = r.targetBitrate ? Math.round(r.targetBitrate / 1000) : null;
+                        result.framesPerSecond = r.framesPerSecond || 0;
+                        result.framesEncoded = r.framesEncoded || 0;
+                        result.keyFramesEncoded = r.keyFramesEncoded || 0;
+                        result.qpSum = r.qpSum || 0;
+                        result.bytesSent = r.bytesSent || 0;
+                        result.codec = r.codecId || null;
+                        result.isHardware = !!(r.encoderImplementation && (
+                            r.encoderImplementation.includes('ExternalEncoder') ||
+                            r.encoderImplementation.includes('Vaapi') ||
+                            r.encoderImplementation.includes('VAAPI') ||
+                            r.encoderImplementation.includes('VideoToolbox') ||
+                            r.encoderImplementation.includes('NVENC') ||
+                            r.encoderImplementation.includes('MediaCodec')
+                        ));
+                    }
+                    if (r.type === 'codec' && r.mimeType && r.mimeType.includes('video')) {
+                        result.codecMime = r.mimeType;
+                        result.codecPayloadType = r.payloadType;
+                    }
+                });
+            } catch(e) {
+                result.statsError = e.toString();
+            }
+            return result;
+        }""")
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/encoder-stats")
+async def encoder_stats_all():
+    """批量查询所有活跃 tab 的编码器状态 — 用于诊断硬件编码是否生效"""
+    results = []
+    for browser in browser_manager.browsers.values():
+        if browser.status != "idle":
+            continue
+        for tab_id, tab in browser.tabs.items():
+            if tab.page.is_closed():
+                continue
+            info = await _get_encoder_stats(tab)
+            info["browser_id"] = browser.browser_id
+            info["tab_id"] = tab_id
+            info["room"] = tab.room_name
+            results.append(info)
+
+    # 汇总
+    hw_count = sum(1 for r in results if r.get("isHardware"))
+    sw_count = sum(1 for r in results if r.get("encoderImplementation") and not r.get("isHardware"))
+    err_count = sum(1 for r in results if r.get("error"))
+
+    return {
+        "summary": {
+            "total": len(results),
+            "hardware": hw_count,
+            "software": sw_count,
+            "error_or_no_pc": err_count,
+        },
+        "tabs": results,
+    }
+
 
 # ── File serving ──
 from server.services.browser_instance import DOWNLOADS_DIR
@@ -131,6 +252,26 @@ async def serve_download(room_name: str, filename: str):
         filename=filename,
         media_type="application/octet-stream",
     )
+
+# ── Codec config API ──
+
+@app.get("/api/codec")
+async def get_codec():
+    """获取当前视频编码偏好"""
+    from server.config import VIDEO_CODEC
+    return {"codec": VIDEO_CODEC, "options": ["h264", "vp9", "av1"]}
+
+@app.put("/api/codec")
+async def set_codec(request: Request):
+    """设置视频编码偏好（需重建 stream 生效）"""
+    import server.config as cfg
+    body = await request.json()
+    codec = body.get("codec", "").lower()
+    if codec not in ("h264", "vp9", "av1"):
+        return JSONResponse({"error": f"unsupported codec: {codec}"}, status_code=400)
+    cfg.VIDEO_CODEC = codec
+    os.environ["VIDEO_CODEC"] = codec
+    return {"codec": codec, "message": "Codec preference updated. Reconnect viewers to apply."}
 
 if __name__ == "__main__":
     import uvicorn

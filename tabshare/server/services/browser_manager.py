@@ -166,7 +166,12 @@ class BrowserManager:
     def add_viewer(self, browser_id: int, tab_id: int, ws):
         tab = self.find_tab(browser_id, tab_id)
         if tab:
+            was_empty = len(tab.viewers) == 0
             tab.viewers.append(ws)
+            # 第一个 viewer 连接时恢复推流
+            if was_empty and tab.publisher:
+                import asyncio
+                asyncio.ensure_future(tab.publisher.resume())
 
     def remove_viewer(self, browser_id: int, tab_id: int, ws):
         tab = self.find_tab(browser_id, tab_id)
@@ -175,6 +180,10 @@ class BrowserManager:
                 tab.viewers.remove(ws)
             except ValueError:
                 pass
+            # 最后一个 viewer 断开时暂停推流，释放编码器
+            if len(tab.viewers) == 0 and tab.publisher:
+                import asyncio
+                asyncio.ensure_future(tab.publisher.pause())
 
     async def broadcast_to_viewers(self, browser_id: int, tab_id: int, event: dict):
         """Push an event to all viewers of a tab."""

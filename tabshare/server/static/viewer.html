@@ -1,11 +1,17 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TabShare Viewer</title>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
         body {
             background: #0a0a0f;
             display: flex;
@@ -27,6 +33,7 @@
             flex-shrink: 0;
             z-index: 1100;
         }
+
         .toolbar-sub {
             background: #181824;
             border-bottom: 1px solid #22223a;
@@ -38,6 +45,7 @@
             flex-shrink: 0;
             z-index: 1099;
         }
+
         .tb-btn {
             background: #2a2a3e;
             border: 1px solid #3a3a50;
@@ -50,17 +58,40 @@
             line-height: 1;
             white-space: nowrap;
         }
-        .tb-btn:hover { background: #3a3a50; color: #fff; }
-        .tb-btn.primary { background: #4a6cf7; border-color: #5b7cf8; color: #fff; }
-        .tb-btn.primary:hover { background: #5b7cf8; }
-        .tb-btn.active { background: #4a6cf7; border-color: #5b7cf8; color: #fff; }
-        .tb-btn.sm { font-size: 12px; padding: 3px 8px; }
+
+        .tb-btn:hover {
+            background: #3a3a50;
+            color: #fff;
+        }
+
+        .tb-btn.primary {
+            background: #4a6cf7;
+            border-color: #5b7cf8;
+            color: #fff;
+        }
+
+        .tb-btn.primary:hover {
+            background: #5b7cf8;
+        }
+
+        .tb-btn.active {
+            background: #4a6cf7;
+            border-color: #5b7cf8;
+            color: #fff;
+        }
+
+        .tb-btn.sm {
+            font-size: 12px;
+            padding: 3px 8px;
+        }
+
         .url-bar {
             flex: 1;
             display: flex;
             gap: 4px;
             min-width: 0;
         }
+
         .url-input {
             flex: 1;
             background: #12121a;
@@ -72,7 +103,11 @@
             outline: none;
             min-width: 0;
         }
-        .url-input:focus { border-color: #4a6cf7; }
+
+        .url-input:focus {
+            border-color: #4a6cf7;
+        }
+
         .tb-select {
             background: #12121a;
             border: 1px solid #2a2a3a;
@@ -83,24 +118,75 @@
             outline: none;
             cursor: pointer;
         }
-        .tb-select:focus { border-color: #4a6cf7; }
+
+        .tb-select:focus {
+            border-color: #4a6cf7;
+        }
+
         .tb-sep {
             width: 1px;
             height: 20px;
             background: #2a2a3a;
             flex-shrink: 0;
         }
+
         .tb-label {
             color: #667;
             font-size: 11px;
             white-space: nowrap;
         }
+
         .tb-info {
             color: #556;
             font-family: 'SF Mono', 'Fira Code', monospace;
             font-size: 11px;
             white-space: nowrap;
         }
+
+        /* WebRTC Stats */
+        .stats-bar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 11px;
+            white-space: nowrap;
+        }
+
+        .stat-item {
+            display: flex;
+            align-items: center;
+            gap: 3px;
+        }
+
+        .stat-label {
+            color: #556;
+        }
+
+        .stat-value {
+            color: #8f8;
+            font-weight: 600;
+        }
+
+        .enc-badge {
+            font-size: 10px;
+            font-weight: 700;
+            padding: 1px 5px;
+            border-radius: 3px;
+            letter-spacing: 0.5px;
+        }
+        .enc-hw { background: rgba(0,200,80,0.25); color: #4f4; }
+        .enc-sw { background: rgba(255,60,60,0.25); color: #f66; }
+        .enc-idle { background: rgba(120,120,120,0.2); color: #888; }
+
+        .stat-value.warn {
+            color: #fa0;
+        }
+
+        .stat-value.bad {
+            color: #f55;
+        }
+
         .admin-link {
             color: #8a8aaa;
             text-decoration: none;
@@ -110,7 +196,11 @@
             transition: all 0.15s;
             white-space: nowrap;
         }
-        .admin-link:hover { color: #4a6cf7; background: rgba(74,108,247,0.1); }
+
+        .admin-link:hover {
+            color: #4a6cf7;
+            background: rgba(74, 108, 247, 0.1);
+        }
 
         /* ── Video Area ── */
         .video-area {
@@ -121,11 +211,13 @@
             overflow: hidden;
             position: relative;
         }
+
         #screen {
             display: block;
             cursor: default;
             outline: none;
         }
+
         /* Scale modes */
         #screen.scale-fit {
             max-width: 100%;
@@ -134,15 +226,18 @@
             height: auto;
             object-fit: contain;
         }
+
         #screen.scale-fill {
             width: 100%;
             height: 100%;
             object-fit: contain;
         }
+
         #screen.scale-real {
             width: auto;
             height: auto;
         }
+
         #status {
             font-family: 'SF Mono', 'Fira Code', monospace;
             font-size: 11px;
@@ -151,9 +246,24 @@
             transition: opacity 0.5s ease;
             white-space: nowrap;
         }
-        .status-connecting { background: rgba(255,170,0,0.15); color: #ffa500; border: 1px solid rgba(255,170,0,0.3); }
-        .status-connected  { background: rgba(0,200,80,0.15); color: #0c6; border: 1px solid rgba(0,200,80,0.3); }
-        .status-error      { background: rgba(255,60,60,0.15); color: #f44; border: 1px solid rgba(255,60,60,0.3); }
+
+        .status-connecting {
+            background: rgba(255, 170, 0, 0.15);
+            color: #ffa500;
+            border: 1px solid rgba(255, 170, 0, 0.3);
+        }
+
+        .status-connected {
+            background: rgba(0, 200, 80, 0.15);
+            color: #0c6;
+            border: 1px solid rgba(0, 200, 80, 0.3);
+        }
+
+        .status-error {
+            background: rgba(255, 60, 60, 0.15);
+            color: #f44;
+            border: 1px solid rgba(255, 60, 60, 0.3);
+        }
 
         /* Navigation loading overlay */
         #nav-overlay {
@@ -171,24 +281,30 @@
             pointer-events: none;
             transition: opacity 0.3s ease;
         }
+
         #nav-overlay.visible {
             opacity: 1;
             pointer-events: auto;
         }
+
         .spinner {
             width: 40px;
             height: 40px;
-            border: 3px solid rgba(255,255,255,0.1);
+            border: 3px solid rgba(255, 255, 255, 0.1);
             border-top-color: rgba(120, 160, 255, 0.8);
             border-radius: 50%;
             animation: spin 0.8s linear infinite;
         }
+
         @keyframes spin {
-            to { transform: rotate(360deg); }
+            to {
+                transform: rotate(360deg);
+            }
         }
+
         .nav-text {
             margin-top: 16px;
-            color: rgba(255,255,255,0.5);
+            color: rgba(255, 255, 255, 0.5);
             font-size: 14px;
             letter-spacing: 0.5px;
         }
@@ -204,7 +320,11 @@
             overflow-x: auto;
             z-index: 1098;
         }
-        .tab-bar::-webkit-scrollbar { height: 0; }
+
+        .tab-bar::-webkit-scrollbar {
+            height: 0;
+        }
+
         .tab-item {
             display: flex;
             align-items: center;
@@ -218,8 +338,18 @@
             transition: all 0.15s;
             user-select: none;
         }
-        .tab-item:hover { background: #1e1e2e; color: #aaa; }
-        .tab-item.active { background: #252538; color: #ddd; border-bottom: 2px solid #4a6cf7; }
+
+        .tab-item:hover {
+            background: #1e1e2e;
+            color: #aaa;
+        }
+
+        .tab-item.active {
+            background: #252538;
+            color: #ddd;
+            border-bottom: 2px solid #4a6cf7;
+        }
+
         .tab-item .tab-close {
             font-size: 14px;
             line-height: 1;
@@ -228,7 +358,12 @@
             padding: 0 2px;
             border-radius: 3px;
         }
-        .tab-item .tab-close:hover { color: #f44; background: rgba(255,60,60,0.15); }
+
+        .tab-item .tab-close:hover {
+            color: #f44;
+            background: rgba(255, 60, 60, 0.15);
+        }
+
         .tab-new {
             display: flex;
             align-items: center;
@@ -238,7 +373,11 @@
             cursor: pointer;
             transition: all 0.15s;
         }
-        .tab-new:hover { color: #4a6cf7; background: #1e1e2e; }
+
+        .tab-new:hover {
+            color: #4a6cf7;
+            background: #1e1e2e;
+        }
 
         /* Download toast */
         .dl-toast {
@@ -255,23 +394,47 @@
             display: flex;
             align-items: center;
             gap: 10px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
             animation: slideUp 0.3s ease;
             max-width: 400px;
         }
-        .dl-toast a { color: #4a6cf7; text-decoration: none; font-weight: 600; }
-        .dl-toast a:hover { text-decoration: underline; }
-        .dl-toast .dl-close {
-            cursor: pointer; color: #555; font-size: 16px; margin-left: 8px;
+
+        .dl-toast a {
+            color: #4a6cf7;
+            text-decoration: none;
+            font-weight: 600;
         }
-        .dl-toast .dl-close:hover { color: #f44; }
+
+        .dl-toast a:hover {
+            text-decoration: underline;
+        }
+
+        .dl-toast .dl-close {
+            cursor: pointer;
+            color: #555;
+            font-size: 16px;
+            margin-left: 8px;
+        }
+
+        .dl-toast .dl-close:hover {
+            color: #f44;
+        }
+
         @keyframes slideUp {
-            from { transform: translateY(20px); opacity: 0; }
-            to { transform: translateY(0); opacity: 1; }
+            from {
+                transform: translateY(20px);
+                opacity: 0;
+            }
+
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
         }
     </style>
     <!-- Native WebRTC, no SDK needed -->
 </head>
+
 <body>
     <!-- Toolbar Row 1: Navigation -->
     <div class="toolbar" id="toolbar">
@@ -286,7 +449,8 @@
         <div class="tb-sep"></div>
         <span class="tb-label" id="tabLabel"></span>
         <div class="tb-sep"></div>
-        <button class="tb-btn sm" onclick="document.getElementById('fileUpload').click()" title="Upload file to remote browser">📎 Upload</button>
+        <button class="tb-btn sm" id="translateBtn" onclick="translatePage()"
+            title="Translate current page">🌐 Translate</button>
         <input type="file" id="fileUpload" style="display:none" onchange="uploadFile(this)">
         <a href="/admin" class="admin-link">Admin ↗</a>
     </div>
@@ -311,6 +475,20 @@
         <div class="tb-sep"></div>
         <button class="tb-btn sm" onclick="toggleFullscreen()" title="Toggle Fullscreen">⛶ Fullscreen</button>
         <div style="flex:1"></div>
+        <div class="stats-bar" id="statsBar">
+            <span class="stat-item"><span class="stat-label">FPS</span> <span class="stat-value"
+                    id="statFps">--</span></span>
+            <span class="stat-item"><span class="stat-label">Bitrate</span> <span class="stat-value"
+                    id="statBitrate">--</span></span>
+            <span class="stat-item"><span class="stat-label">Codec</span> <span class="stat-value"
+                    id="statCodec">--</span> <span class="enc-badge enc-idle"
+                    id="encBadge">--</span></span>
+            <span class="stat-item"><span class="stat-label">Loss</span> <span class="stat-value"
+                    id="statLoss">--</span></span>
+            <span class="stat-item"><span class="stat-label">Jitter</span> <span class="stat-value"
+                    id="statJitter">--</span></span>
+        </div>
+        <div class="tb-sep"></div>
         <span id="status" class="status-connecting">Connecting…</span>
         <div class="tb-sep"></div>
         <span class="tb-info" id="vpInfo">--</span>
@@ -329,635 +507,834 @@
     </div>
 
     <!-- Hidden input element for IME support -->
-    <textarea id="ime-trap" style="position: absolute; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; z-index: -1;" autofocus></textarea>
+    <textarea id="ime-trap"
+        style="position: absolute; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; z-index: -1;"
+        autofocus></textarea>
 
     <script>
-    (() => {
-        const statusEl = document.getElementById('status');
-        const video = document.getElementById('screen');
-        const navOverlay = document.getElementById('nav-overlay');
-        const imeTrap = document.getElementById('ime-trap');
-        const tabId = window.location.pathname.split('/').pop();
-        const pathParts = window.location.pathname.split('/');
-        // URL: /viewer/{browserId}/{tabId}
-        const browserId = parseInt(pathParts[pathParts.length - 2]);
-        let activeTabId = parseInt(tabId);
-        let activeRoom = `${browserId}_${activeTabId}`;
-        const urlInput = document.getElementById('urlInput');
-        const tabLabel = document.getElementById('tabLabel');
-        const tabBar = document.getElementById('tabBar');
+        (() => {
+            const statusEl = document.getElementById('status');
+            const video = document.getElementById('screen');
+            const navOverlay = document.getElementById('nav-overlay');
+            const imeTrap = document.getElementById('ime-trap');
+            const tabId = window.location.pathname.split('/').pop();
+            const pathParts = window.location.pathname.split('/');
+            // URL: /viewer/{browserId}/{tabId}
+            const browserId = parseInt(pathParts[pathParts.length - 2]);
+            let activeTabId = parseInt(tabId);
+            let activeRoom = `${browserId}_${activeTabId}`;
+            const urlInput = document.getElementById('urlInput');
+            const tabLabel = document.getElementById('tabLabel');
+            const tabBar = document.getElementById('tabBar');
 
-        tabLabel.textContent = `${browserId}/${activeTabId}`;
-        document.title = `TabShare - ${browserId}/${activeTabId}`;
+            tabLabel.textContent = `${browserId}/${activeTabId}`;
+            document.title = `TabShare - ${browserId}/${activeTabId}`;
 
-        // ── Toolbar Navigation ──
-        async function navApi(path, body) {
-            try {
-                const opts = { method: 'POST', headers: {'Content-Type': 'application/json'} };
-                if (body) opts.body = JSON.stringify(body);
-                const res = await fetch(path, opts);
-                return await res.json();
-            } catch(e) {
-                console.error('Nav error:', e);
-            }
-        }
-
-        function navGo() {
-            let url = urlInput.value.trim();
-            if (!url) return;
-            if (!url.match(/^https?:\/\//)) url = 'https://' + url;
-            urlInput.value = url;
-            navApi(`/api/admin/browsers/${browserId}/tabs/${activeTabId}/navigate`, {url});
-        }
-
-        async function navBack() {
-            const result = await navApi(`/api/admin/browsers/${browserId}/tabs/${activeTabId}/back`);
-            if (result && result.url) urlInput.value = result.url;
-        }
-
-        async function navForward() {
-            const result = await navApi(`/api/admin/browsers/${browserId}/tabs/${activeTabId}/forward`);
-            if (result && result.url) urlInput.value = result.url;
-        }
-
-        function navReload() {
-            if (urlInput.value) {
-                navApi(`/api/admin/browsers/${browserId}/tabs/${activeTabId}/navigate`, {url: urlInput.value});
-            }
-        }
-
-        // Enter key in URL bar
-        urlInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') { e.preventDefault(); navGo(); }
-            e.stopPropagation(); // Don't forward to page
-        });
-        // Prevent toolbar inputs from capturing keyboard events meant for the page
-        urlInput.addEventListener('keyup', (e) => e.stopPropagation());
-
-        let ws, pc;
-        let sfuSubId = null; // SFU subscriber ID for fast track switching
-        let _popupOverlayTimer = null;
-        let statusFadeTimer = null;
-
-        function setStatus(text, type) {
-            statusEl.textContent = text;
-            statusEl.className = `status-${type}`;
-            statusEl.style.opacity = '1';
-            clearTimeout(statusFadeTimer);
-            if (type === 'connected') {
-                statusFadeTimer = setTimeout(() => { statusEl.style.opacity = '0'; }, 3000);
-            }
-        }
-
-        function showNavOverlay() {
-            navOverlay.classList.add('visible');
-        }
-
-        function hideNavOverlay() {
-            navOverlay.classList.remove('visible');
-        }
-
-        async function connectSFU() {
-            if (pc) { try { pc.close(); } catch(e) {} pc = null; }
-            try {
-                setStatus('Connecting to stream…', 'connecting');
-
-                pc = new RTCPeerConnection({
-                    iceServers: [],
-                    iceTransportPolicy: 'all'
-                });
-
-                // We only receive video, add a transceiver
-                pc.addTransceiver('video', { direction: 'recvonly' });
-
-                pc.ontrack = (ev) => {
-                    console.log('[viewer] got track:', ev.track.kind);
-                    if (ev.track.kind === 'video') {
-                        video.srcObject = ev.streams[0] || new MediaStream([ev.track]);
-                        setStatus('Connected', 'connected');
-                        hideNavOverlay();
-                        imeTrap.focus({ preventScroll: true });
-                        // Re-register frame watch for new stream
-                        if (typeof startFrameWatch === 'function') startFrameWatch();
-                    }
-                };
-
-                pc.oniceconnectionstatechange = () => {
-                    console.log('[viewer] ICE state:', pc.iceConnectionState);
-                    if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
-                        setStatus('Disconnected', 'error');
-                        showNavOverlay();
-                        setTimeout(connectSFU, 2000);
-                    }
-                };
-
-                const offer = await pc.createOffer();
-                await pc.setLocalDescription(offer);
-
-                const res = await fetch(`/api/sfu/offer?room=${activeRoom}&role=sub`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ sdp: pc.localDescription.sdp })
-                });
-
-                if (!res.ok) {
-                    const text = await res.text();
-                    throw new Error(`SFU error: ${res.status} ${text}`);
-                }
-
-                const answer = await res.json();
-                if (answer.sub_id) sfuSubId = answer.sub_id;
-                await pc.setRemoteDescription(new RTCSessionDescription({
-                    type: answer.type,
-                    sdp: answer.sdp
-                }));
-
-                console.log('[viewer] SDP answer set, waiting for ICE+media');
-            } catch (e) {
-                console.error('SFU connect error:', e);
-                setStatus('Waiting for publisher…', 'connecting');
-                setTimeout(connectSFU, 3000);
-            }
-        }
-
-        function connectWS() {
-            const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            ws = new WebSocket(`${protocol}//${location.host}/ws/tab/${browserId}/${activeTabId}`);
-
-            ws.onopen = () => {
-                setStatus('Waiting for stream…', 'connecting');
-                applyResolution();
-                loadTabBar();
-                // Connect SFU after viewport is applied (give backend time to resize)
-                setTimeout(connectSFU, 300);
-            };
-
-            ws.onmessage = (ev) => {
+            // ── Toolbar Navigation ──
+            async function navApi(path, body) {
                 try {
-                    const msg = JSON.parse(ev.data);
-                    if (msg.type === 'nav_start') {
-                        showNavOverlay();
-                        setStatus('Page loading…', 'connecting');
-                    } else if (msg.type === 'nav_done') {
-                        if (msg.url) urlInput.value = msg.url;
-                    } else if (msg.type === 'download_ready') {
-                        showDownloadToast(msg);
-                    } else if (msg.type === 'filechooser_opened') {
-                        console.log('Remote file chooser opened, prompting local file picker');
-                        // Show a toast hint and auto-trigger the file picker
-                        const toast = document.createElement('div');
-                        toast.className = 'dl-toast';
-                        toast.innerHTML = `
+                    const opts = { method: 'POST', headers: { 'Content-Type': 'application/json' } };
+                    if (body) opts.body = JSON.stringify(body);
+                    const res = await fetch(path, opts);
+                    return await res.json();
+                } catch (e) {
+                    console.error('Nav error:', e);
+                }
+            }
+
+            function navGo() {
+                let url = urlInput.value.trim();
+                if (!url) return;
+                if (!url.match(/^https?:\/\//)) url = 'https://' + url;
+                urlInput.value = url;
+                navApi(`/api/admin/browsers/${browserId}/tabs/${activeTabId}/navigate`, { url });
+            }
+
+            async function navBack() {
+                const result = await navApi(`/api/admin/browsers/${browserId}/tabs/${activeTabId}/back`);
+                if (result && result.url) urlInput.value = result.url;
+            }
+
+            async function navForward() {
+                const result = await navApi(`/api/admin/browsers/${browserId}/tabs/${activeTabId}/forward`);
+                if (result && result.url) urlInput.value = result.url;
+            }
+
+            function navReload() {
+                if (urlInput.value) {
+                    navApi(`/api/admin/browsers/${browserId}/tabs/${activeTabId}/navigate`, { url: urlInput.value });
+                }
+            }
+
+            // Enter key in URL bar
+            urlInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') { e.preventDefault(); navGo(); }
+                e.stopPropagation(); // Don't forward to page
+            });
+            // Prevent toolbar inputs from capturing keyboard events meant for the page
+            urlInput.addEventListener('keyup', (e) => e.stopPropagation());
+
+            let ws, pc;
+            let sfuSubId = null; // SFU subscriber ID for fast track switching
+            let _popupOverlayTimer = null;
+            let statusFadeTimer = null;
+
+            function setStatus(text, type) {
+                statusEl.textContent = text;
+                statusEl.className = `status-${type}`;
+                statusEl.style.opacity = '1';
+                clearTimeout(statusFadeTimer);
+                if (type === 'connected') {
+                    statusFadeTimer = setTimeout(() => { statusEl.style.opacity = '0'; }, 3000);
+                }
+            }
+
+            function showNavOverlay() {
+                navOverlay.classList.add('visible');
+            }
+
+            function hideNavOverlay() {
+                navOverlay.classList.remove('visible');
+            }
+
+            async function connectSFU() {
+                if (pc) { try { pc.close(); } catch (e) { } pc = null; }
+                try {
+                    setStatus('Connecting to stream…', 'connecting');
+
+                    pc = new RTCPeerConnection({
+                        iceServers: [],
+                        iceTransportPolicy: 'all'
+                    });
+
+                    // We only receive video, add a transceiver
+                    pc.addTransceiver('video', { direction: 'recvonly' });
+
+                    pc.ontrack = (ev) => {
+                        console.log('[viewer] got track:', ev.track.kind);
+                        if (ev.track.kind === 'video') {
+                            video.srcObject = ev.streams[0] || new MediaStream([ev.track]);
+                            setStatus('Connected', 'connected');
+                            hideNavOverlay();
+                            imeTrap.focus({ preventScroll: true });
+                            // Re-register frame watch for new stream
+                            if (typeof startFrameWatch === 'function') startFrameWatch();
+                        }
+                    };
+
+                    pc.oniceconnectionstatechange = () => {
+                        console.log('[viewer] ICE state:', pc.iceConnectionState);
+                        if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+                            setStatus('Disconnected', 'error');
+                            showNavOverlay();
+                            setTimeout(connectSFU, 2000);
+                        }
+                    };
+
+                    const offer = await pc.createOffer();
+                    await pc.setLocalDescription(offer);
+
+                    const res = await fetch(`/api/sfu/offer?room=${activeRoom}&role=sub`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ sdp: pc.localDescription.sdp })
+                    });
+
+                    if (!res.ok) {
+                        const text = await res.text();
+                        throw new Error(`SFU error: ${res.status} ${text}`);
+                    }
+
+                    const answer = await res.json();
+                    if (answer.sub_id) sfuSubId = answer.sub_id;
+                    await pc.setRemoteDescription(new RTCSessionDescription({
+                        type: answer.type,
+                        sdp: answer.sdp
+                    }));
+
+                    console.log('[viewer] SDP answer set, waiting for ICE+media');
+                } catch (e) {
+                    console.error('SFU connect error:', e);
+                    setStatus('Waiting for publisher…', 'connecting');
+                    setTimeout(connectSFU, 3000);
+                }
+            }
+
+            function connectWS() {
+                const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+                ws = new WebSocket(`${protocol}//${location.host}/ws/tab/${browserId}/${activeTabId}`);
+
+                ws.onopen = () => {
+                    setStatus('Waiting for stream…', 'connecting');
+                    applyResolution();
+                    renderTabBar();
+                    fetchCurrentTabUrl();
+                    // Connect SFU after viewport is applied (give backend time to resize)
+                    setTimeout(connectSFU, 300);
+                };
+
+                ws.onmessage = (ev) => {
+                    try {
+                        const msg = JSON.parse(ev.data);
+                        if (msg.type === 'nav_start') {
+                            showNavOverlay();
+                            setStatus('Page loading…', 'connecting');
+                        } else if (msg.type === 'nav_done') {
+                            if (msg.url) urlInput.value = msg.url;
+                        } else if (msg.type === 'download_ready') {
+                            showDownloadToast(msg);
+                        } else if (msg.type === 'filechooser_opened') {
+                            console.log('Remote file chooser opened, prompting local file picker');
+                            // Show a toast hint and auto-trigger the file picker
+                            const toast = document.createElement('div');
+                            toast.className = 'dl-toast';
+                            toast.innerHTML = `
                             📂 <span>Remote page requests a file. Select a file to upload.</span>
                             <span class="dl-close" onclick="this.parentElement.remove()">×</span>
                         `;
-                        document.body.appendChild(toast);
-                        setTimeout(() => { if (toast.parentElement) toast.remove(); }, 8000);
-                        document.getElementById('fileUpload').click();
-                    } else if (msg.type === 'popup_loading') {
-                        // Show loading overlay while popup tab is being created
-                        showNavOverlay();
-                        setStatus('Opening new tab…', 'connecting');
-                        if (_popupOverlayTimer) clearTimeout(_popupOverlayTimer);
-                        _popupOverlayTimer = setTimeout(() => {
-                            hideNavOverlay();
+                            document.body.appendChild(toast);
+                            setTimeout(() => { if (toast.parentElement) toast.remove(); }, 8000);
+                            document.getElementById('fileUpload').click();
+                        } else if (msg.type === 'popup_loading') {
+                            // Show loading overlay while popup tab is being created
+                            showNavOverlay();
+                            setStatus('Opening new tab…', 'connecting');
+                            if (_popupOverlayTimer) clearTimeout(_popupOverlayTimer);
+                            _popupOverlayTimer = setTimeout(() => {
+                                hideNavOverlay();
+                                _popupOverlayTimer = null;
+                            }, 9000);
+                        } else if (msg.type === 'popup_tab_created') {
+                            // New tab ready, switch to it
+                            console.log('Popup created new tab:', msg.tab_id);
+                            if (_popupOverlayTimer) clearTimeout(_popupOverlayTimer);
                             _popupOverlayTimer = null;
-                        }, 9000);
-                    } else if (msg.type === 'popup_tab_created') {
-                        // New tab ready, switch to it
-                        console.log('Popup created new tab:', msg.tab_id);
-                        if (_popupOverlayTimer) clearTimeout(_popupOverlayTimer);
-                        _popupOverlayTimer = null;
-                        hideNavOverlay();
-                        if (msg.tab_id >= 0) {
-                            loadTabBar();
-                            switchTab(msg.tab_id);
+                            hideNavOverlay();
+                            if (msg.tab_id >= 0) {
+                                if (!myTabs.includes(msg.tab_id)) myTabs.push(msg.tab_id);
+                                switchTab(msg.tab_id);
+                            }
                         }
-                    }
-                } catch(e) {}
-            };
+                    } catch (e) { }
+                };
 
-            ws.onclose = () => {
-                console.log('WebSocket closed');
-                setTimeout(connectWS, 2000);
-            };
+                ws.onclose = () => {
+                    console.log('WebSocket closed');
+                    setTimeout(connectWS, 2000);
+                };
 
-            ws.onerror = () => {};
+                ws.onerror = () => { };
 
-        }
-
-        // ─── Resolution & Viewport ───
-        const resSelect = document.getElementById('resSelect');
-        const vpInfo = document.getElementById('vpInfo');
-        let currentRes = {w: 1920, h: 1080}; // default
-
-        function sendViewport(w, h) {
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'viewport', width: w, height: h }));
-            }
-        }
-
-        function applyResolution() {
-            const val = resSelect.value;
-            let w, h;
-            if (val === 'auto') {
-                const area = document.getElementById('videoArea');
-                w = area.clientWidth;
-                h = area.clientHeight;
-            } else {
-                [w, h] = val.split('x').map(Number);
-            }
-            currentRes = {w, h};
-            sendViewport(w, h);
-            updateVpInfo();
-        }
-
-        function updateVpInfo() {
-            const vw = video.videoWidth || currentRes.w;
-            const vh = video.videoHeight || currentRes.h;
-            vpInfo.textContent = `${vw}×${vh}`;
-        }
-
-        resSelect.addEventListener('change', applyResolution);
-
-        // On window resize, if auto mode, update viewport
-        let _vpTimer = null;
-        window.addEventListener('resize', () => {
-            clearTimeout(_vpTimer);
-            _vpTimer = setTimeout(() => {
-                if (resSelect.value === 'auto') applyResolution();
-            }, 500);
-        });
-
-        // Update info when video metadata loads
-        video.addEventListener('loadedmetadata', updateVpInfo);
-        video.addEventListener('resize', updateVpInfo);
-
-        // ─── Scale Mode ───
-        let currentScale = 'fit';
-        function setScale(mode) {
-            currentScale = mode;
-            video.className = `scale-${mode}`;
-            document.getElementById('scaleFit').classList.toggle('active', mode === 'fit');
-            document.getElementById('scaleFill').classList.toggle('active', mode === 'fill');
-            document.getElementById('scaleReal').classList.toggle('active', mode === 'real');
-        }
-
-        // ─── Fullscreen ───
-        function toggleFullscreen() {
-            if (!document.fullscreenElement) {
-                document.documentElement.requestFullscreen().catch(() => {});
-            } else {
-                document.exitFullscreen();
-            }
-        }
-
-        // ─── Input Mapping ───
-
-        function getRenderedVideoRect() {
-            // Calculate the actual rendered rectangle of the video
-            // accounting for object-fit: contain letterboxing
-            const rect = video.getBoundingClientRect();
-            const vw = video.videoWidth || 1;
-            const vh = video.videoHeight || 1;
-
-            if (currentScale === 'real') {
-                // 1:1 mode: video is at native size, centered
-                return { rx: rect.left, ry: rect.top, rw: rect.width, rh: rect.height, vw, vh };
             }
 
-            // For fit and fill modes with object-fit: contain
-            const containerAR = rect.width / rect.height;
-            const videoAR = vw / vh;
-            let rw, rh, rx, ry;
+            // ─── Resolution & Viewport ───
+            const resSelect = document.getElementById('resSelect');
+            const vpInfo = document.getElementById('vpInfo');
+            let currentRes = { w: 1920, h: 1080 }; // default
 
-            if (videoAR > containerAR) {
-                // Video is wider — letterboxed top/bottom
-                rw = rect.width;
-                rh = rect.width / videoAR;
-                rx = rect.left;
-                ry = rect.top + (rect.height - rh) / 2;
-            } else {
-                // Video is taller — pillarboxed left/right
-                rh = rect.height;
-                rw = rect.height * videoAR;
-                rx = rect.left + (rect.width - rw) / 2;
-                ry = rect.top;
+            function sendViewport(w, h) {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: 'viewport', width: w, height: h }));
+                }
             }
-            return { rx, ry, rw, rh, vw, vh };
-        }
 
-        function mapCoords(e) {
-            const { rx, ry, rw, rh, vw, vh } = getRenderedVideoRect();
-            const x = ((e.clientX - rx) / rw) * vw;
-            const y = ((e.clientY - ry) / rh) * vh;
-            // Clamp to video bounds
-            return {
-                x: Math.max(0, Math.min(vw, Math.round(x))),
-                y: Math.max(0, Math.min(vh, Math.round(y)))
-            };
-        }
-
-        function buttonName(b) {
-            return b === 0 ? 'left' : b === 1 ? 'middle' : b === 2 ? 'right' : 'none';
-        }
-
-        function sendInput(data) {
-            if (ws?.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify(data));
+            function applyResolution() {
+                const val = resSelect.value;
+                let w, h;
+                if (val === 'auto') {
+                    const area = document.getElementById('videoArea');
+                    w = area.clientWidth;
+                    h = area.clientHeight;
+                } else {
+                    [w, h] = val.split('x').map(Number);
+                }
+                currentRes = { w, h };
+                sendViewport(w, h);
+                updateVpInfo();
             }
-        }
 
-        // ─── Mouse Events (on Video) ───
-
-        video.addEventListener('mousemove', (e) => {
-            e.preventDefault();
-            const { x, y } = mapCoords(e);
-            sendInput({ type: 'mouse', eventType: 'mouseMoved', x, y, button: 'none' });
-        });
-        // Helper to check if an element is part of any toolbar/tab-bar
-        function isToolbarElement(el) {
-            return document.getElementById('toolbar').contains(el)
-                || document.getElementById('toolbar-sub').contains(el)
-                || document.getElementById('tabBar').contains(el);
-        }
-
-        video.addEventListener('mousedown', (e) => {
-            e.preventDefault();
-            // Only grab focus if not interacting with toolbar
-            if (!isToolbarElement(document.activeElement)) {
-                imeTrap.focus({ preventScroll: true });
+            function updateVpInfo() {
+                const vw = video.videoWidth || currentRes.w;
+                const vh = video.videoHeight || currentRes.h;
+                vpInfo.textContent = `${vw}×${vh}`;
             }
-            const { x, y } = mapCoords(e);
-            sendInput({ type: 'mouse', eventType: 'mousePressed', x, y, button: buttonName(e.button) });
-        });
 
-        video.addEventListener('mouseup', (e) => {
-            e.preventDefault();
-            const { x, y } = mapCoords(e);
-            sendInput({ type: 'mouse', eventType: 'mouseReleased', x, y, button: buttonName(e.button) });
-        });
+            resSelect.addEventListener('change', applyResolution);
 
-        video.addEventListener('contextmenu', e => e.preventDefault());
+            // On window resize, if auto mode, update viewport
+            let _vpTimer = null;
+            window.addEventListener('resize', () => {
+                clearTimeout(_vpTimer);
+                _vpTimer = setTimeout(() => {
+                    if (resSelect.value === 'auto') applyResolution();
+                }, 500);
+            });
 
-        video.addEventListener('wheel', (e) => {
-            e.preventDefault();
-            const { x, y } = mapCoords(e);
-            sendInput({ type: 'scroll', x, y, deltaX: e.deltaX, deltaY: e.deltaY });
-        }, { passive: false });
+            // Update info when video metadata loads
+            video.addEventListener('loadedmetadata', updateVpInfo);
+            video.addEventListener('resize', updateVpInfo);
 
-        // ─── Keyboard & IME Events (on Hidden Textarea) ───
-        
-        let isComposing = false;
-
-        // Release all modifier keys on remote to prevent stuck keys
-        // (IME toggle via Shift/Ctrl swallows the keyup event)
-        function resetModifiers() {
-            for (const mod of ['Shift', 'Control', 'Alt', 'Meta']) {
-                sendInput({ type: 'keyboard', eventType: 'keyUp', key: mod, code: '' });
+            // ─── Scale Mode ───
+            let currentScale = 'fit';
+            function setScale(mode) {
+                currentScale = mode;
+                video.className = `scale-${mode}`;
+                document.getElementById('scaleFit').classList.toggle('active', mode === 'fit');
+                document.getElementById('scaleFill').classList.toggle('active', mode === 'fill');
+                document.getElementById('scaleReal').classList.toggle('active', mode === 'real');
             }
-        }
 
-        imeTrap.addEventListener('compositionstart', () => {
-            console.log("IME: compositionstart");
-            isComposing = true;
-            resetModifiers();
-        });
-
-        imeTrap.addEventListener('compositionend', (e) => {
-            console.log("IME: compositionend", e.data);
-            isComposing = false;
-            if (e.data) {
-                sendInput({ type: 'insertText', text: e.data });
+            // ─── Fullscreen ───
+            function toggleFullscreen() {
+                if (!document.fullscreenElement) {
+                    document.documentElement.requestFullscreen().catch(() => { });
+                } else {
+                    document.exitFullscreen();
+                }
             }
-            // 延迟清空，防止立刻触发的 input 事件读取到残留或干扰浏览器状态
-            setTimeout(() => { imeTrap.value = ''; }, 0);
-        });
 
-        imeTrap.addEventListener('input', (e) => {
-            console.log("IME: input event", { isComposing, val: imeTrap.value, inputType: e.inputType });
-            // 如果正在拼写拼音，绝对不能清空 value，否则打断输入法！
-            if (isComposing) return;
-            
-            // 处理非输入法状态下的纯粘贴
-            if (e.inputType === 'insertFromPaste') {
-                sendInput({ type: 'insertText', text: imeTrap.value });
+            // ─── Input Mapping ───
+
+            function getRenderedVideoRect() {
+                // Calculate the actual rendered rectangle of the video
+                // accounting for object-fit: contain letterboxing
+                const rect = video.getBoundingClientRect();
+                const vw = video.videoWidth || 1;
+                const vh = video.videoHeight || 1;
+
+                if (currentScale === 'real') {
+                    // 1:1 mode: video is at native size, centered
+                    return { rx: rect.left, ry: rect.top, rw: rect.width, rh: rect.height, vw, vh };
+                }
+
+                // For fit and fill modes with object-fit: contain
+                const containerAR = rect.width / rect.height;
+                const videoAR = vw / vh;
+                let rw, rh, rx, ry;
+
+                if (videoAR > containerAR) {
+                    // Video is wider — letterboxed top/bottom
+                    rw = rect.width;
+                    rh = rect.width / videoAR;
+                    rx = rect.left;
+                    ry = rect.top + (rect.height - rh) / 2;
+                } else {
+                    // Video is taller — pillarboxed left/right
+                    rh = rect.height;
+                    rw = rect.height * videoAR;
+                    rx = rect.left + (rect.width - rw) / 2;
+                    ry = rect.top;
+                }
+                return { rx, ry, rw, rh, vw, vh };
             }
-            
-            // 正常按键已经在 keydown 里发过了，这里直接清空垃圾即可
-            setTimeout(() => { imeTrap.value = ''; }, 0);
-        });
 
-        imeTrap.addEventListener('keydown', (e) => {
-            const ae = document.activeElement;
-            if (ae !== imeTrap && isToolbarElement(ae)) return;
-            console.log("IME: keydown", { key: e.key, code: e.code, isComposing, nativeComposing: e.isComposing });
+            function mapCoords(e) {
+                const { rx, ry, rw, rh, vw, vh } = getRenderedVideoRect();
+                const x = ((e.clientX - rx) / rw) * vw;
+                const y = ((e.clientY - ry) / rh) * vh;
+                // Clamp to video bounds
+                return {
+                    x: Math.max(0, Math.min(vw, Math.round(x))),
+                    y: Math.max(0, Math.min(vh, Math.round(y)))
+                };
+            }
 
-            // Skip if actively composing (use both native and manual flags)
-            if (e.isComposing || isComposing) return;
-            // Skip unknown keys from IME (but NOT keyCode 229 — unreliable on fcitx/ibus)
-            if (e.key === 'Process' || e.key === 'Unidentified') return;
+            function buttonName(b) {
+                return b === 0 ? 'left' : b === 1 ? 'middle' : b === 2 ? 'right' : 'none';
+            }
 
-            sendInput({ type: 'keyboard', eventType: 'keyDown', key: e.key, code: e.code });
-            if (e.key === 'Backspace' || e.key === 'Tab') {
+            function sendInput(data) {
+                if (ws?.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify(data));
+                }
+            }
+
+            // ─── Mouse Events (on Video) ───
+
+            video.addEventListener('mousemove', (e) => {
                 e.preventDefault();
+                const { x, y } = mapCoords(e);
+                sendInput({ type: 'mouse', eventType: 'mouseMoved', x, y, button: 'none' });
+            });
+            // Helper to check if an element is part of any toolbar/tab-bar
+            function isToolbarElement(el) {
+                return document.getElementById('toolbar').contains(el)
+                    || document.getElementById('toolbar-sub').contains(el)
+                    || document.getElementById('tabBar').contains(el);
             }
-        });
 
-        imeTrap.addEventListener('keyup', (e) => {
-            if (e.isComposing || isComposing) return;
-            if (e.key === 'Process' || e.key === 'Unidentified') return;
-            sendInput({ type: 'keyboard', eventType: 'keyUp', key: e.key, code: e.code });
-        });
+            video.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                // Only grab focus if not interacting with toolbar
+                if (!isToolbarElement(document.activeElement)) {
+                    imeTrap.focus({ preventScroll: true });
+                }
+                const { x, y } = mapCoords(e);
+                sendInput({ type: 'mouse', eventType: 'mousePressed', x, y, button: buttonName(e.button) });
+            });
 
-        // Ensure the trap stays focused (but not when toolbar is active)
-        document.body.addEventListener('click', (e) => {
-            if (!isToolbarElement(e.target)) {
-                imeTrap.focus({ preventScroll: true });
+            video.addEventListener('mouseup', (e) => {
+                e.preventDefault();
+                const { x, y } = mapCoords(e);
+                sendInput({ type: 'mouse', eventType: 'mouseReleased', x, y, button: buttonName(e.button) });
+            });
+
+            video.addEventListener('contextmenu', e => e.preventDefault());
+
+            video.addEventListener('wheel', (e) => {
+                e.preventDefault();
+                const { x, y } = mapCoords(e);
+                sendInput({ type: 'scroll', x, y, deltaX: e.deltaX, deltaY: e.deltaY });
+            }, { passive: false });
+
+            // ─── File Paste & Drop (images ≤5MB) ───
+
+            const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+
+            async function sendFileViaWS(file) {
+                if (!file || !file.type.startsWith('image/')) return;
+                if (file.size > MAX_FILE_SIZE) {
+                    console.warn(`File too large: ${(file.size / 1024 / 1024).toFixed(1)}MB (max 5MB)`);
+                    return;
+                }
+                const reader = new FileReader();
+                reader.onload = () => {
+                    const base64 = reader.result.split(',')[1]; // strip data:...;base64,
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({
+                            type: 'paste-file',
+                            name: file.name || 'clipboard.png',
+                            mime: file.type,
+                            data: base64,
+                        }));
+                        console.log(`Pasted: ${file.name || 'image'} (${(file.size / 1024).toFixed(0)}KB)`);
+                    }
+                };
+                reader.readAsDataURL(file);
             }
-        });
 
-        // ─── Session lifecycle ───
-        function startSession() {
-            if (ws) { ws.onclose = null; ws.close(); }
-            if (pc) { pc.close(); pc = null; }
-            setStatus('Connecting…', 'connecting');
-            showNavOverlay();
-            connectWS();
-            video.addEventListener('playing', startFrameWatch, { once: true });
-        }
-
-        // Initialize
-        startSession();
-
-        // Frame watch: only hides overlay when video frames arrive
-        function startFrameWatch() {
-            if (!('requestVideoFrameCallback' in HTMLVideoElement.prototype)) return;
-            function onFrame() {
-                hideNavOverlay();
-                setStatus('Connected', 'connected');
-                video.requestVideoFrameCallback(onFrame);
-            }
-            video.requestVideoFrameCallback(onFrame);
-        }
-        video.addEventListener('playing', startFrameWatch, { once: true });
-
-        // ─── View Group (Tab Bar) ───
-        async function loadTabBar() {
-            try {
-                const data = await fetch(`/api/admin/browsers/${browserId}/tabs`).then(r => r.json());
-                const tabs = data.tabs || [];
-                // Update URL bar with current tab's URL
-                const cur = tabs.find(t => t.tab_id === activeTabId);
-                if (cur && cur.url) urlInput.value = cur.url;
-                // Render tab bar
-                tabBar.innerHTML = tabs.map(t => {
-                    const label = `tab ${t.tab_id}`;
-                    const isActive = t.tab_id === activeTabId;
-                    return `<div class="tab-item${isActive ? ' active' : ''}" data-tid="${t.tab_id}">
-                        <span class="tab-title" onclick="switchTab(${t.tab_id})">${label}</span>
-                        <span class="tab-close" onclick="event.stopPropagation(); closeTab(${t.tab_id})">×</span>
-                    </div>`;
-                }).join('') + '<div class="tab-new" onclick="createNewTab()" title="New Tab">+</div>';
-            } catch(e) {
-                console.error('loadTabBar error:', e);
-            }
-        }
-
-        async function switchTab(newTabId) {
-            if (newTabId === activeTabId) return;
-            const oldTabId = activeTabId;
-            activeTabId = newTabId;
-            activeRoom = `${browserId}_${activeTabId}`;
-            tabLabel.textContent = `${browserId}/${activeTabId}`;
-            document.title = `TabShare - ${browserId}/${activeTabId}`;
-            history.replaceState(null, '', `/viewer/${browserId}/${activeTabId}`);
-
-            // Fast path: if PC is connected and we have a sub_id, use /switch
-            if (pc && sfuSubId && pc.iceConnectionState === 'connected') {
-                try {
-                    setStatus('Switching…', 'connecting');
-                    // Reconnect WS (lightweight)
-                    if (ws) { ws.onclose = null; ws.close(); }
-                    connectWS();
-
-                    const res = await fetch(`/api/sfu/switch?sub_id=${sfuSubId}&room=${activeRoom}`, {
-                        method: 'POST'
-                    });
-                    if (res.ok) {
-                        console.log('[viewer] fast switch to', activeRoom);
-                        // Video will update automatically via ReplaceTrack
+            // Paste: Ctrl+V with image in clipboard
+            document.addEventListener('paste', (e) => {
+                if (!e.clipboardData || !e.clipboardData.files.length) return;
+                for (const file of e.clipboardData.files) {
+                    if (file.type.startsWith('image/')) {
+                        e.preventDefault();
+                        sendFileViaWS(file);
                         return;
                     }
-                    console.warn('[viewer] switch failed, falling back to reconnect');
-                } catch(e) {
-                    console.warn('[viewer] switch error, falling back:', e);
+                }
+            });
+
+            // Drop: drag image file onto viewer
+            video.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'copy';
+                video.style.outline = '3px dashed #667eea';
+                video.style.outlineOffset = '-3px';
+            });
+            video.addEventListener('dragleave', () => {
+                video.style.outline = '';
+                video.style.outlineOffset = '';
+            });
+            video.addEventListener('drop', (e) => {
+                e.preventDefault();
+                video.style.outline = '';
+                video.style.outlineOffset = '';
+                if (e.dataTransfer.files.length) {
+                    sendFileViaWS(e.dataTransfer.files[0]);
+                }
+            });
+
+            // ─── Keyboard & IME Events (on Hidden Textarea) ───
+
+            let isComposing = false;
+
+            // Release all modifier keys on remote to prevent stuck keys
+            // (IME toggle via Shift/Ctrl swallows the keyup event)
+            function resetModifiers() {
+                for (const mod of ['Shift', 'Control', 'Alt', 'Meta']) {
+                    sendInput({ type: 'keyboard', eventType: 'keyUp', key: mod, code: '' });
                 }
             }
 
-            // Slow path: full reconnect
-            startSession();
-        }
+            imeTrap.addEventListener('compositionstart', () => {
+                console.log("IME: compositionstart");
+                isComposing = true;
+                resetModifiers();
+            });
 
-        async function closeTab(tid) {
-            if (!confirm(`Close tab ${tid}?`)) return;
-            try {
-                await fetch(`/api/admin/browsers/${browserId}/tabs/${tid}`, {method: 'DELETE'});
-                if (tid === activeTabId) {
-                    // Switch to another tab if available
-                    const data = await fetch(`/api/admin/browsers/${browserId}/tabs`).then(r => r.json());
-                    const remaining = data.tabs || [];
-                    if (remaining.length > 0) {
-                        switchTab(remaining[0].tab_id);
-                    } else {
-                        tabBar.innerHTML = '<div class="tab-new" onclick="createNewTab()" title="New Tab">+</div>';
-                        setStatus('No tabs', 'error');
+            imeTrap.addEventListener('compositionend', (e) => {
+                console.log("IME: compositionend", e.data);
+                isComposing = false;
+                if (e.data) {
+                    sendInput({ type: 'insertText', text: e.data });
+                }
+                // 延迟清空，防止立刻触发的 input 事件读取到残留或干扰浏览器状态
+                setTimeout(() => { imeTrap.value = ''; }, 0);
+            });
+
+            imeTrap.addEventListener('input', (e) => {
+                console.log("IME: input event", { isComposing, val: imeTrap.value, inputType: e.inputType });
+                // 如果正在拼写拼音，绝对不能清空 value，否则打断输入法！
+                if (isComposing) return;
+
+                // 处理非输入法状态下的纯粘贴
+                if (e.inputType === 'insertFromPaste') {
+                    sendInput({ type: 'insertText', text: imeTrap.value });
+                }
+
+                // 正常按键已经在 keydown 里发过了，这里直接清空垃圾即可
+                setTimeout(() => { imeTrap.value = ''; }, 0);
+            });
+
+            imeTrap.addEventListener('keydown', (e) => {
+                const ae = document.activeElement;
+                if (ae !== imeTrap && isToolbarElement(ae)) return;
+                console.log("IME: keydown", { key: e.key, code: e.code, isComposing, nativeComposing: e.isComposing });
+
+                // Skip if actively composing (use both native and manual flags)
+                if (e.isComposing || isComposing) return;
+                // Skip unknown keys from IME (but NOT keyCode 229 — unreliable on fcitx/ibus)
+                if (e.key === 'Process' || e.key === 'Unidentified') return;
+
+                // Functional keys (length > 1): send immediately
+                if (e.key.length > 1) {
+                    sendInput({ type: 'keyboard', eventType: 'keyDown', key: e.key, code: e.code });
+                    if (e.key === 'Backspace' || e.key === 'Tab') {
+                        e.preventDefault();
                     }
-                } else {
-                    loadTabBar();
+                    return;
                 }
-            } catch(e) {
-                console.error('closeTab error:', e);
-            }
-        }
 
-        async function createNewTab() {
-            try {
-                const res = await fetch(`/api/admin/browsers/${browserId}/tabs`, {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        url: 'https://www.google.com',
-                        viewport_width: currentRes.w,
-                        viewport_height: currentRes.h,
-                    }),
+                // Printable characters: defer 1 frame to let compositionstart fire first
+                // (macOS fires keydown BEFORE compositionstart)
+                const key = e.key, code = e.code;
+                requestAnimationFrame(() => {
+                    if (!isComposing) {
+                        sendInput({ type: 'keyboard', eventType: 'keyDown', key, code });
+                    }
                 });
-                const tab = await res.json();
-                if (tab.tab_id) switchTab(tab.tab_id);
-            } catch(e) {
-                console.error('createNewTab error:', e);
-            }
-        }
+            });
 
-        // ─── File Transfer ───
-        function showDownloadToast(msg) {
-            const sizeStr = msg.size > 1048576
-                ? (msg.size / 1048576).toFixed(1) + ' MB'
-                : (msg.size / 1024).toFixed(1) + ' KB';
-            const toast = document.createElement('div');
-            toast.className = 'dl-toast';
-            toast.innerHTML = `
+            imeTrap.addEventListener('keyup', (e) => {
+                if (e.isComposing || isComposing) return;
+                if (e.key === 'Process' || e.key === 'Unidentified') return;
+
+                if (e.key.length > 1) {
+                    sendInput({ type: 'keyboard', eventType: 'keyUp', key: e.key, code: e.code });
+                    return;
+                }
+
+                // Defer printable keyup to match deferred keydown
+                const key = e.key, code = e.code;
+                requestAnimationFrame(() => {
+                    if (!isComposing) {
+                        sendInput({ type: 'keyboard', eventType: 'keyUp', key, code });
+                    }
+                });
+            });
+
+            // Ensure the trap stays focused (but not when toolbar is active)
+            document.body.addEventListener('click', (e) => {
+                if (!isToolbarElement(e.target)) {
+                    imeTrap.focus({ preventScroll: true });
+                }
+            });
+
+            // ─── Session lifecycle ───
+            function startSession() {
+                if (ws) { ws.onclose = null; ws.close(); }
+                if (pc) { pc.close(); pc = null; }
+                setStatus('Connecting…', 'connecting');
+                showNavOverlay();
+                connectWS();
+                video.addEventListener('playing', startFrameWatch, { once: true });
+            }
+
+            // Initialize
+            startSession();
+
+            // Frame watch: only hides overlay when video frames arrive
+            function startFrameWatch() {
+                if (!('requestVideoFrameCallback' in HTMLVideoElement.prototype)) return;
+                function onFrame() {
+                    hideNavOverlay();
+                    setStatus('Connected', 'connected');
+                    video.requestVideoFrameCallback(onFrame);
+                }
+                video.requestVideoFrameCallback(onFrame);
+            }
+            video.addEventListener('playing', startFrameWatch, { once: true });
+
+            // ─── WebRTC Stats Polling ───
+            const statEls = {
+                fps: document.getElementById('statFps'),
+                bitrate: document.getElementById('statBitrate'),
+                codec: document.getElementById('statCodec'),
+                loss: document.getElementById('statLoss'),
+                jitter: document.getElementById('statJitter'),
+            };
+            let prevStats = { bytes: 0, frames: 0, ts: 0, packetsLost: 0, packetsRecv: 0 };
+
+            function classifyFps(fps) { return fps >= 24 ? '' : fps >= 15 ? 'warn' : 'bad'; }
+            function classifyLoss(pct) { return pct <= 1 ? '' : pct <= 5 ? 'warn' : 'bad'; }
+            function classifyJitter(ms) { return ms <= 30 ? '' : ms <= 80 ? 'warn' : 'bad'; }
+
+            async function pollStats() {
+                if (!pc || pc.connectionState !== 'connected') return;
+                try {
+                    const stats = await pc.getStats();
+                    let codecName = '';
+                    const codecMap = {};
+                    stats.forEach(report => {
+                        if (report.type === 'codec') {
+                            codecMap[report.id] = report.mimeType?.split('/')[1] || report.mimeType;
+                        }
+                    });
+                    stats.forEach(report => {
+                        if (report.type === 'inbound-rtp' && report.kind === 'video') {
+                            const now = report.timestamp;
+                            const dt = (now - prevStats.ts) / 1000; // seconds
+                            if (dt > 0 && prevStats.ts > 0) {
+                                // FPS
+                                const dFrames = (report.framesDecoded || 0) - prevStats.frames;
+                                const fps = Math.round(dFrames / dt);
+                                statEls.fps.textContent = fps;
+                                statEls.fps.className = 'stat-value ' + classifyFps(fps);
+
+                                // Bitrate
+                                const dBytes = (report.bytesReceived || 0) - prevStats.bytes;
+                                const kbps = Math.round((dBytes * 8) / (dt * 1000));
+                                statEls.bitrate.textContent = kbps > 1000 ? (kbps / 1000).toFixed(1) + ' Mbps' : kbps + ' kbps';
+
+                                // Packet loss
+                                const dLost = (report.packetsLost || 0) - prevStats.packetsLost;
+                                const dRecv = (report.packetsReceived || 0) - prevStats.packetsRecv;
+                                const lossPct = dRecv > 0 ? ((dLost / (dLost + dRecv)) * 100) : 0;
+                                statEls.loss.textContent = lossPct.toFixed(1) + '%';
+                                statEls.loss.className = 'stat-value ' + classifyLoss(lossPct);
+
+                                // Jitter
+                                const jitterMs = Math.round((report.jitter || 0) * 1000);
+                                statEls.jitter.textContent = jitterMs + ' ms';
+                                statEls.jitter.className = 'stat-value ' + classifyJitter(jitterMs);
+                            }
+                            prevStats = {
+                                bytes: report.bytesReceived || 0,
+                                frames: report.framesDecoded || 0,
+                                ts: now,
+                                packetsLost: report.packetsLost || 0,
+                                packetsRecv: report.packetsReceived || 0,
+                            };
+                            // Codec
+                            if (report.codecId && codecMap[report.codecId]) {
+                                codecName = codecMap[report.codecId];
+                            }
+                        }
+                    });
+                    if (codecName) statEls.codec.textContent = codecName;
+                } catch (e) {
+                    console.warn('stats poll error:', e);
+                }
+            }
+            setInterval(pollStats, 1000);
+
+            // ─── Encoder H/S Badge (from publisher side) ───
+            const encBadge = document.getElementById('encBadge');
+            async function pollEncoderType() {
+                if (!activeRoom) return;
+                try {
+                    const resp = await fetch(`/api/encoder-stats`);
+                    const data = await resp.json();
+                    const tab = data.tabs?.find(t => t.room === activeRoom);
+                    if (!tab) {
+                        encBadge.textContent = 'IDLE';
+                        encBadge.className = 'enc-badge enc-idle';
+                    } else if (tab.error) {
+                        encBadge.textContent = 'IDLE';
+                        encBadge.className = 'enc-badge enc-idle';
+                    } else if (tab.isHardware) {
+                        encBadge.textContent = 'HW';
+                        encBadge.className = 'enc-badge enc-hw';
+                    } else {
+                        encBadge.textContent = 'SW';
+                        encBadge.className = 'enc-badge enc-sw';
+                    }
+                } catch (e) { /* ignore */ }
+            }
+            setInterval(pollEncoderType, 3000);
+            setTimeout(pollEncoderType, 1500);
+
+            // ─── Local Tab Bar (per-viewer, not synced with backend) ───
+            let myTabs = [activeTabId]; // 本地 tab 列表，初始只有 URL 中的 tab
+
+            function renderTabBar() {
+                tabBar.innerHTML = myTabs.map(tid => {
+                    const isActive = tid === activeTabId;
+                    return `<div class="tab-item${isActive ? ' active' : ''}" data-tid="${tid}">
+                    <span class="tab-title" onclick="switchTab(${tid})">tab ${tid}</span>
+                    <span class="tab-close" onclick="event.stopPropagation(); closeTab(${tid})">×</span>
+                </div>`;
+                }).join('') + '<div class="tab-new" onclick="createNewTab()" title="New Tab">+</div>';
+            }
+
+            // 初始化：获取当前 tab 的 URL
+            async function fetchCurrentTabUrl() {
+                try {
+                    const data = await fetch(`/api/admin/browsers/${browserId}/tabs`).then(r => r.json());
+                    const cur = (data.tabs || []).find(t => t.tab_id === activeTabId);
+                    if (cur && cur.url) urlInput.value = cur.url;
+                } catch (e) { }
+            }
+
+            async function switchTab(newTabId) {
+                if (newTabId === activeTabId) return;
+                // 确保目标 tab 在本地列表中
+                if (!myTabs.includes(newTabId)) myTabs.push(newTabId);
+                activeTabId = newTabId;
+                activeRoom = `${browserId}_${activeTabId}`;
+                tabLabel.textContent = `${browserId}/${activeTabId}`;
+                document.title = `TabShare - ${browserId}/${activeTabId}`;
+                history.replaceState(null, '', `/viewer/${browserId}/${activeTabId}`);
+                renderTabBar();
+
+                // Fast path: if PC is connected and we have a sub_id, use /switch
+                if (pc && sfuSubId && pc.iceConnectionState === 'connected') {
+                    try {
+                        setStatus('Switching…', 'connecting');
+                        // Reconnect WS (lightweight)
+                        if (ws) { ws.onclose = null; ws.close(); }
+                        connectWS();
+
+                        const res = await fetch(`/api/sfu/switch?sub_id=${sfuSubId}&room=${activeRoom}`, {
+                            method: 'POST'
+                        });
+                        if (res.ok) {
+                            console.log('[viewer] fast switch to', activeRoom);
+                            return;
+                        }
+                        console.warn('[viewer] switch failed, falling back to reconnect');
+                    } catch (e) {
+                        console.warn('[viewer] switch error, falling back:', e);
+                    }
+                }
+
+                // Slow path: full reconnect
+                startSession();
+            }
+
+            async function closeTab(tid) {
+                if (!confirm(`Close tab ${tid}?`)) return;
+                try {
+                    await fetch(`/api/admin/browsers/${browserId}/tabs/${tid}`, { method: 'DELETE' });
+                    myTabs = myTabs.filter(t => t !== tid);
+                    if (tid === activeTabId) {
+                        if (myTabs.length > 0) {
+                            switchTab(myTabs[0]);
+                        } else {
+                            renderTabBar();
+                            setStatus('No tabs', 'error');
+                        }
+                    } else {
+                        renderTabBar();
+                    }
+                } catch (e) {
+                    console.error('closeTab error:', e);
+                }
+            }
+
+            async function createNewTab() {
+                try {
+                    const res = await fetch(`/api/admin/browsers/${browserId}/tabs`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            url: 'https://www.bing.com',
+                            viewport_width: currentRes.w,
+                            viewport_height: currentRes.h,
+                        }),
+                    });
+                    const tab = await res.json();
+                    if (tab.tab_id >= 0) {
+                        myTabs.push(tab.tab_id);
+                        switchTab(tab.tab_id);
+                    }
+                } catch (e) {
+                    console.error('createNewTab error:', e);
+                }
+            }
+
+            // ─── File Transfer ───
+            function showDownloadToast(msg) {
+                const sizeStr = msg.size > 1048576
+                    ? (msg.size / 1048576).toFixed(1) + ' MB'
+                    : (msg.size / 1024).toFixed(1) + ' KB';
+                const toast = document.createElement('div');
+                toast.className = 'dl-toast';
+                toast.innerHTML = `
                 📥 <span><strong>${msg.filename}</strong> (${sizeStr})</span>
                 <a href="${msg.download_url}" download="${msg.filename}">Download</a>
                 <span class="dl-close" onclick="this.parentElement.remove()">×</span>
             `;
-            document.body.appendChild(toast);
-            setTimeout(() => { if (toast.parentElement) toast.remove(); }, 15000);
-        }
+                document.body.appendChild(toast);
+                setTimeout(() => { if (toast.parentElement) toast.remove(); }, 15000);
+            }
 
-        async function uploadFile(input) {
-            const file = input.files[0];
-            if (!file) return;
-            const formData = new FormData();
-            formData.append('file', file);
-            try {
-                const res = await fetch(`/api/admin/browsers/${browserId}/tabs/${activeTabId}/upload`, {
-                    method: 'POST',
-                    body: formData,
-                });
-                const result = await res.json();
-                console.log('Upload result:', result);
-                // Show confirmation
-                const toast = document.createElement('div');
-                toast.className = 'dl-toast';
-                const sizeStr = result.size > 1048576
-                    ? (result.size / 1048576).toFixed(1) + ' MB'
-                    : (result.size / 1024).toFixed(1) + ' KB';
-                toast.innerHTML = `
+            async function uploadFile(input) {
+                const file = input.files[0];
+                if (!file) return;
+                const formData = new FormData();
+                formData.append('file', file);
+                try {
+                    const res = await fetch(`/api/admin/browsers/${browserId}/tabs/${activeTabId}/upload`, {
+                        method: 'POST',
+                        body: formData,
+                    });
+                    const result = await res.json();
+                    console.log('Upload result:', result);
+                    // Show confirmation
+                    const toast = document.createElement('div');
+                    toast.className = 'dl-toast';
+                    const sizeStr = result.size > 1048576
+                        ? (result.size / 1048576).toFixed(1) + ' MB'
+                        : (result.size / 1024).toFixed(1) + ' KB';
+                    toast.innerHTML = `
                     📤 <span>Uploaded <strong>${result.filename}</strong> (${sizeStr})</span>
                     <span class="dl-close" onclick="this.parentElement.remove()">×</span>
                 `;
-                document.body.appendChild(toast);
-                setTimeout(() => { if (toast.parentElement) toast.remove(); }, 5000);
-            } catch(e) {
-                console.error('Upload error:', e);
-                alert('Upload failed: ' + e.message);
+                    document.body.appendChild(toast);
+                    setTimeout(() => { if (toast.parentElement) toast.remove(); }, 5000);
+                } catch (e) {
+                    console.error('Upload error:', e);
+                    alert('Upload failed: ' + e.message);
+                }
+                input.value = ''; // Reset for re-upload
             }
-            input.value = ''; // Reset for re-upload
-        }
 
-        // Expose nav functions for toolbar onclick
-        window.navGo = navGo;
-        window.navBack = navBack;
-        window.navForward = navForward;
-        window.navReload = navReload;
-        window.setScale = setScale;
-        window.toggleFullscreen = toggleFullscreen;
-        window.switchTab = switchTab;
-        window.closeTab = closeTab;
-        window.createNewTab = createNewTab;
-        window.uploadFile = uploadFile;
-    })();
+            // Expose nav functions for toolbar onclick
+            window.navGo = navGo;
+            let _translated = false;
+            function translatePage() {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    _translated = !_translated;
+                    ws.send(JSON.stringify({ type: 'translate', restore: !_translated }));
+                    const btn = document.getElementById('translateBtn');
+                    btn.textContent = _translated ? '🌐 Original' : '🌐 Translate';
+                }
+            }
+
+            window.navBack = navBack;
+            window.navForward = navForward;
+            window.navReload = navReload;
+            window.setScale = setScale;
+            window.toggleFullscreen = toggleFullscreen;
+            window.switchTab = switchTab;
+            window.closeTab = closeTab;
+            window.createNewTab = createNewTab;
+            window.uploadFile = uploadFile;
+            window.translatePage = translatePage;
+        })();
     </script>
 </body>
+
 </html>
