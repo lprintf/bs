@@ -64,6 +64,87 @@ async def ws_input(websocket: WebSocket, browser_id: int, tab_id: int):
                     if text:
                         await page.keyboard.insert_text(text)
 
+                elif t == "paste-file":
+                    import base64
+                    file_data = msg.get("data", "")
+                    file_name = msg.get("name", "clipboard.png")
+                    file_mime = msg.get("mime", "image/png")
+                    if file_data and len(file_data) < 7_000_000:  # ~5MB base64
+                        await page.evaluate("""([b64, name, mime]) => {
+                            const byteChars = atob(b64);
+                            const byteArray = new Uint8Array(byteChars.length);
+                            for (let i = 0; i < byteChars.length; i++) {
+                                byteArray[i] = byteChars.charCodeAt(i);
+                            }
+                            const file = new File([byteArray], name, { type: mime });
+                            const dt = new DataTransfer();
+                            dt.items.add(file);
+                            const evt = new ClipboardEvent('paste', {
+                                bubbles: true, cancelable: true, clipboardData: dt
+                            });
+                            (document.activeElement || document.body).dispatchEvent(evt);
+                        }""", [file_data, file_name, file_mime])
+                        print(f"[ws:{browser_id}/{tab_id}] paste-file: {file_name} ({file_mime})")
+
+                elif t == "translate":
+                    restore = msg.get("restore", False)
+                    target_lang = msg.get("lang", "zh-CN")
+                    try:
+                        if restore:
+                            await page.evaluate("""() => {
+                                if (!window._origTexts) return;
+                                for (const [id, text] of window._origTexts) {
+                                    const el = document.querySelector(`[data-t-id="${id}"]`);
+                                    if (el && el.firstChild) el.firstChild.textContent = text;
+                                }
+                                window._origTexts = null;
+                            }""")
+                            print(f"[ws:{browser_id}/{tab_id}] translate restored")
+                        else:
+                            await page.evaluate("""async (targetLang) => {
+                                const walker = document.createTreeWalker(
+                                    document.body, NodeFilter.SHOW_TEXT,
+                                    { acceptNode: n => n.textContent.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP }
+                                );
+                                const nodes = [];
+                                while (walker.nextNode()) {
+                                    const n = walker.currentNode;
+                                    if (n.parentElement && !['SCRIPT','STYLE','NOSCRIPT'].includes(n.parentElement.tagName)) {
+                                        nodes.push(n);
+                                    }
+                                }
+                                // Save originals
+                                window._origTexts = [];
+                                nodes.forEach((n, i) => {
+                                    const id = '_t_' + i;
+                                    n.parentElement.setAttribute('data-t-id', id);
+                                    window._origTexts.push([id, n.textContent]);
+                                });
+                                // Batch translate
+                                for (let i = 0; i < nodes.length; i += 100) {
+                                    const batch = nodes.slice(i, i + 100);
+                                    const texts = batch.map(n => n.textContent.trim()).filter(Boolean);
+                                    if (!texts.length) continue;
+                                    const q = texts.map(t => `q=${encodeURIComponent(t)}`).join('&');
+                                    try {
+                                        const resp = await fetch(
+                                            `https://translate.googleapis.com/translate_a/t?client=dict-chrome-ex&sl=auto&tl=${targetLang}&${q}`
+                                        );
+                                        const results = await resp.json();
+                                        const translations = Array.isArray(results[0]) ? results.map(r => r[0]) : [results[0]];
+                                        let ti = 0;
+                                        for (const node of batch) {
+                                            if (node.textContent.trim() && ti < translations.length) {
+                                                node.textContent = translations[ti++];
+                                            }
+                                        }
+                                    } catch(e) { console.warn('Translate batch error:', e); }
+                                }
+                            }""", target_lang)
+                            print(f"[ws:{browser_id}/{tab_id}] translate → {target_lang}")
+                    except Exception as e:
+                        print(f"[ws:{browser_id}/{tab_id}] translate error: {e}")
+
                 elif t == "viewport":
                     w = msg.get("width", 1280)
                     h = msg.get("height", 720)

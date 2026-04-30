@@ -449,8 +449,8 @@
         <div class="tb-sep"></div>
         <span class="tb-label" id="tabLabel"></span>
         <div class="tb-sep"></div>
-        <button class="tb-btn sm" onclick="document.getElementById('fileUpload').click()"
-            title="Upload file to remote browser">📎 Upload</button>
+        <button class="tb-btn sm" id="translateBtn" onclick="translatePage()"
+            title="Translate current page">🌐 Translate</button>
         <input type="file" id="fileUpload" style="display:none" onchange="uploadFile(this)">
         <a href="/admin" class="admin-link">Admin ↗</a>
     </div>
@@ -887,6 +887,64 @@
                 sendInput({ type: 'scroll', x, y, deltaX: e.deltaX, deltaY: e.deltaY });
             }, { passive: false });
 
+            // ─── File Paste & Drop (images ≤5MB) ───
+
+            const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+
+            async function sendFileViaWS(file) {
+                if (!file || !file.type.startsWith('image/')) return;
+                if (file.size > MAX_FILE_SIZE) {
+                    console.warn(`File too large: ${(file.size / 1024 / 1024).toFixed(1)}MB (max 5MB)`);
+                    return;
+                }
+                const reader = new FileReader();
+                reader.onload = () => {
+                    const base64 = reader.result.split(',')[1]; // strip data:...;base64,
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({
+                            type: 'paste-file',
+                            name: file.name || 'clipboard.png',
+                            mime: file.type,
+                            data: base64,
+                        }));
+                        console.log(`Pasted: ${file.name || 'image'} (${(file.size / 1024).toFixed(0)}KB)`);
+                    }
+                };
+                reader.readAsDataURL(file);
+            }
+
+            // Paste: Ctrl+V with image in clipboard
+            document.addEventListener('paste', (e) => {
+                if (!e.clipboardData || !e.clipboardData.files.length) return;
+                for (const file of e.clipboardData.files) {
+                    if (file.type.startsWith('image/')) {
+                        e.preventDefault();
+                        sendFileViaWS(file);
+                        return;
+                    }
+                }
+            });
+
+            // Drop: drag image file onto viewer
+            video.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'copy';
+                video.style.outline = '3px dashed #667eea';
+                video.style.outlineOffset = '-3px';
+            });
+            video.addEventListener('dragleave', () => {
+                video.style.outline = '';
+                video.style.outlineOffset = '';
+            });
+            video.addEventListener('drop', (e) => {
+                e.preventDefault();
+                video.style.outline = '';
+                video.style.outlineOffset = '';
+                if (e.dataTransfer.files.length) {
+                    sendFileViaWS(e.dataTransfer.files[0]);
+                }
+            });
+
             // ─── Keyboard & IME Events (on Hidden Textarea) ───
 
             let isComposing = false;
@@ -1255,6 +1313,16 @@
 
             // Expose nav functions for toolbar onclick
             window.navGo = navGo;
+            let _translated = false;
+            function translatePage() {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    _translated = !_translated;
+                    ws.send(JSON.stringify({ type: 'translate', restore: !_translated }));
+                    const btn = document.getElementById('translateBtn');
+                    btn.textContent = _translated ? '🌐 Original' : '🌐 Translate';
+                }
+            }
+
             window.navBack = navBack;
             window.navForward = navForward;
             window.navReload = navReload;
@@ -1264,6 +1332,7 @@
             window.closeTab = closeTab;
             window.createNewTab = createNewTab;
             window.uploadFile = uploadFile;
+            window.translatePage = translatePage;
         })();
     </script>
 </body>
