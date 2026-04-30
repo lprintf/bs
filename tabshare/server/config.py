@@ -7,6 +7,10 @@ MAX_TABS = int(os.getenv("MAX_TABS", 10))
 
 SFU_URL = os.getenv("SFU_INTERNAL_URL", "http://127.0.0.1:8088")
 
+# Video codec preference: h264 (default), vp9, av1
+# Controls publisher SDP munging — only the selected codec is offered to SFU
+VIDEO_CODEC = os.getenv("VIDEO_CODEC", "h264").lower()
+
 # Browser fingerprint defaults
 BROWSER_DATA_DIR = os.getenv("BROWSER_DATA_DIR", "/data/browsers")
 DEFAULT_LOCALE = os.getenv("DEFAULT_LOCALE", "en-US")

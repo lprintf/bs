@@ -15,6 +15,7 @@ class TabPublisher:
         self._paused = True  # 初始暂停，等 viewer 连接后再推流
         self._nav_task: asyncio.Task | None = None
         self._publish_task: asyncio.Task | None = None
+        self._publish_lock = asyncio.Lock()  # 防止并发 publish
 
     @property
     def _browser_id(self) -> int:
@@ -124,6 +125,10 @@ class TabPublisher:
         await browser_manager.broadcast_to_viewers(self._browser_id, self._tab_id, event)
 
     async def _ensure_stream(self) -> bool:
+        async with self._publish_lock:
+            return await self._ensure_stream_inner()
+
+    async def _ensure_stream_inner(self) -> bool:
         try:
             await self.page.wait_for_load_state("domcontentloaded", timeout=5000)
         except Exception:
@@ -140,8 +145,11 @@ class TabPublisher:
             room = self.tab_id
 
             # Step 1: 在浏览器里获取 getDisplayMedia + createOffer (不涉及网络)
-            # SDP munging: 强制 H.264 High Profile (profile-level-id=64xxxx)
-            offer_sdp = await self.page.evaluate("""async () => {
+            # SDP munging: 根据配置强制使用指定 codec
+            from server.config import VIDEO_CODEC
+            codec_pref = VIDEO_CODEC  # h264, vp9, av1
+
+            offer_sdp = await self.page.evaluate("""async (codecPref) => {
                 window._webrtc = window._webrtc || {};
 
                 // Close old PC if exists
@@ -149,17 +157,25 @@ class TabPublisher:
                     try { window._webrtc.pc.close(); } catch(e) {}
                 }
 
-                // SDP munging: keep only H.264, prefer High Profile (64xxxx)
-                function forceH264High(sdp) {
+                // SDP munging: keep only the specified codec family
+                function forceCodec(sdp, targetCodec) {
                     const lines = sdp.split('\\r\\n');
                     const result = [];
                     let inVideo = false;
-                    const h264PTs = new Set();
-                    const highPTs = new Set(); // High Profile PTs
+                    const keepPTs = new Set();
                     const removePTs = new Set();
+                    const highPTs = new Set(); // H.264 High Profile PTs
                     const ptToFmtp = {};
 
-                    // First pass: find H.264 payload types
+                    // Map codec names
+                    const codecNames = {
+                        'h264': 'h264/',
+                        'vp9': 'vp9/',
+                        'av1': 'av1/'
+                    };
+                    const target = codecNames[targetCodec] || 'h264/';
+
+                    // First pass: categorize payload types
                     for (const line of lines) {
                         if (line.startsWith('m=video')) {
                             inVideo = true;
@@ -171,13 +187,12 @@ class TabPublisher:
                             if (rtpMatch) {
                                 const pt = rtpMatch[1];
                                 const codec = rtpMatch[2].toLowerCase();
-                                if (codec.startsWith('h264/')) {
-                                    h264PTs.add(pt);
+                                if (codec.startsWith(target)) {
+                                    keepPTs.add(pt);
                                 } else {
                                     removePTs.add(pt);
                                 }
                             }
-                            // Track fmtp for profile detection
                             const fmtpMatch = line.match(/^a=fmtp:(\\d+)\\s+(.*)/);
                             if (fmtpMatch) {
                                 ptToFmtp[fmtpMatch[1]] = fmtpMatch[2];
@@ -185,17 +200,19 @@ class TabPublisher:
                         }
                     }
 
-                    // Identify High Profile H.264 PTs (profile-level-id starts with 64)
-                    for (const pt of h264PTs) {
-                        const fmtp = ptToFmtp[pt] || '';
-                        const plMatch = fmtp.match(/profile-level-id=([0-9a-fA-F]+)/);
-                        if (plMatch && plMatch[1].startsWith('64')) {
-                            highPTs.add(pt);
+                    // H.264 specific: identify High Profile PTs for reordering
+                    if (targetCodec === 'h264') {
+                        for (const pt of keepPTs) {
+                            const fmtp = ptToFmtp[pt] || '';
+                            const plMatch = fmtp.match(/profile-level-id=([0-9a-fA-F]+)/);
+                            if (plMatch && plMatch[1].startsWith('64')) {
+                                highPTs.add(pt);
+                            }
                         }
                     }
 
-                    // If no H.264 found, return original
-                    if (h264PTs.size === 0) return sdp;
+                    // If target codec not found, return original SDP (no munging)
+                    if (keepPTs.size === 0) return sdp;
 
                     // Find associated RTX payload types to remove
                     for (const line of lines) {
@@ -209,18 +226,21 @@ class TabPublisher:
                         }
                     }
 
-                    // Second pass: filter and reorder (High Profile PTs first)
+                    // Second pass: filter and reorder
                     inVideo = false;
                     for (const line of lines) {
                         if (line.startsWith('m=video')) {
                             inVideo = true;
                             const parts = line.split(' ');
-                            const keepPTs = parts.slice(3).filter(pt => !removePTs.has(pt));
-                            // Reorder: High Profile first, then other H.264
-                            const highFirst = keepPTs.filter(pt => highPTs.has(pt));
-                            const rest = keepPTs.filter(pt => !highPTs.has(pt));
-                            const reordered = parts.slice(0, 3).concat(highFirst, rest);
-                            result.push(reordered.join(' '));
+                            const filtered = parts.slice(3).filter(pt => !removePTs.has(pt));
+                            // H.264: High Profile first
+                            if (targetCodec === 'h264' && highPTs.size > 0) {
+                                const high = filtered.filter(pt => highPTs.has(pt));
+                                const rest = filtered.filter(pt => !highPTs.has(pt));
+                                result.push(parts.slice(0, 3).concat(high, rest).join(' '));
+                            } else {
+                                result.push(parts.slice(0, 3).concat(filtered).join(' '));
+                            }
                             continue;
                         } else if (line.startsWith('m=') && !line.startsWith('m=video')) {
                             inVideo = false;
@@ -266,9 +286,9 @@ class TabPublisher:
                     });
 
                     const offer = await pc.createOffer();
-                    // Munge SDP: H.264 only, High Profile (64xxxx) preferred
-                    const h264Sdp = forceH264High(offer.sdp);
-                    await pc.setLocalDescription({type: 'offer', sdp: h264Sdp});
+                    // Munge SDP: keep only the configured codec
+                    const mungedSdp = forceCodec(offer.sdp, codecPref);
+                    await pc.setLocalDescription({type: 'offer', sdp: mungedSdp});
 
                     window._webrtc.stream = stream;
                     window._webrtc.pc = pc;
@@ -297,7 +317,7 @@ class TabPublisher:
                 } catch(e) {
                     return "ERROR:" + e.toString();
                 }
-            }""")
+            }""", codec_pref)
 
             if not offer_sdp or offer_sdp.startswith("ERROR:"):
                 print(f"TabPublisher[{self.tab_id}]: getDisplayMedia failed: {offer_sdp}")

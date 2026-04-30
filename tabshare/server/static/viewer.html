@@ -168,6 +168,17 @@
             font-weight: 600;
         }
 
+        .enc-badge {
+            font-size: 10px;
+            font-weight: 700;
+            padding: 1px 5px;
+            border-radius: 3px;
+            letter-spacing: 0.5px;
+        }
+        .enc-hw { background: rgba(0,200,80,0.25); color: #4f4; }
+        .enc-sw { background: rgba(255,60,60,0.25); color: #f66; }
+        .enc-idle { background: rgba(120,120,120,0.2); color: #888; }
+
         .stat-value.warn {
             color: #fa0;
         }
@@ -470,7 +481,8 @@
             <span class="stat-item"><span class="stat-label">Bitrate</span> <span class="stat-value"
                     id="statBitrate">--</span></span>
             <span class="stat-item"><span class="stat-label">Codec</span> <span class="stat-value"
-                    id="statCodec">--</span></span>
+                    id="statCodec">--</span> <span class="enc-badge enc-idle"
+                    id="encBadge">--</span></span>
             <span class="stat-item"><span class="stat-label">Loss</span> <span class="stat-value"
                     id="statLoss">--</span></span>
             <span class="stat-item"><span class="stat-label">Jitter</span> <span class="stat-value"
@@ -1043,6 +1055,32 @@
                 }
             }
             setInterval(pollStats, 1000);
+
+            // ─── Encoder H/S Badge (from publisher side) ───
+            const encBadge = document.getElementById('encBadge');
+            async function pollEncoderType() {
+                if (!activeRoom) return;
+                try {
+                    const resp = await fetch(`/api/encoder-stats`);
+                    const data = await resp.json();
+                    const tab = data.tabs?.find(t => t.room === activeRoom);
+                    if (!tab) {
+                        encBadge.textContent = 'IDLE';
+                        encBadge.className = 'enc-badge enc-idle';
+                    } else if (tab.error) {
+                        encBadge.textContent = 'IDLE';
+                        encBadge.className = 'enc-badge enc-idle';
+                    } else if (tab.isHardware) {
+                        encBadge.textContent = 'HW';
+                        encBadge.className = 'enc-badge enc-hw';
+                    } else {
+                        encBadge.textContent = 'SW';
+                        encBadge.className = 'enc-badge enc-sw';
+                    }
+                } catch (e) { /* ignore */ }
+            }
+            setInterval(pollEncoderType, 3000);
+            setTimeout(pollEncoderType, 1500);
 
             // ─── Local Tab Bar (per-viewer, not synced with backend) ───
             let myTabs = [activeTabId]; // 本地 tab 列表，初始只有 URL 中的 tab

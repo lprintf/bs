@@ -71,6 +71,34 @@
             font-size: 0.8rem;
             color: #667eea;
         }
+
+        .codec-selector {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        .codec-btn {
+            padding: 6px 16px;
+            border: 2px solid #333;
+            border-radius: 6px;
+            background: transparent;
+            color: #aaa;
+            font-weight: 600;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .codec-btn:hover { border-color: #667eea; color: #667eea; }
+        .codec-btn.active {
+            border-color: #667eea;
+            background: rgba(102, 126, 234, 0.15);
+            color: #667eea;
+        }
+        .codec-note {
+            font-size: 0.75rem;
+            color: #888;
+            margin-top: 4px;
+        }
     </style>
 </head>
 
@@ -107,6 +135,15 @@
                     <div class="stat-value" id="totalViewers">0</div>
                     <div class="stat-label">Viewers</div>
                 </div>
+            </div>
+            <div class="card" style="margin-top:1rem;">
+                <div class="card-title" style="margin-bottom:0.5rem;">Video Codec</div>
+                <div class="codec-selector" id="codecSelector">
+                    <button class="codec-btn" data-codec="h264" onclick="setCodec('h264')">H.264</button>
+                    <button class="codec-btn" data-codec="vp9" onclick="setCodec('vp9')">VP9</button>
+                    <button class="codec-btn" data-codec="av1" onclick="setCodec('av1')">AV1</button>
+                </div>
+                <div class="codec-note">Changes apply when viewers reconnect. HW support depends on GPU.</div>
             </div>
         </div>
 
@@ -621,8 +658,27 @@
             } catch (e) { console.warn('Failed to load chrome versions', e); }
         }
 
+        // ── Codec ──
+        async function loadCodec() {
+            try {
+                const data = await api('GET', '/api/codec');
+                document.querySelectorAll('.codec-btn').forEach(b => {
+                    b.classList.toggle('active', b.dataset.codec === data.codec);
+                });
+            } catch (e) { console.warn('Failed to load codec', e); }
+        }
+
+        async function setCodec(codec) {
+            try {
+                await api('PUT', '/api/codec', { codec });
+                showToast(`Codec set to ${codec.toUpperCase()}. Reconnect viewers to apply.`, 'success');
+                loadCodec();
+            } catch (e) { showToast(e.message, 'error'); }
+        }
+
         // ── Init ──
         loadChromeVersions();
+        loadCodec();
         refreshData();
         setInterval(refreshData, 10000);
     </script>

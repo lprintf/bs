@@ -8,6 +8,7 @@ from server.api import ws, management
 from server.config import SFU_URL
 from contextlib import asynccontextmanager
 import httpx
+import os
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -251,6 +252,26 @@ async def serve_download(room_name: str, filename: str):
         filename=filename,
         media_type="application/octet-stream",
     )
+
+# ── Codec config API ──
+
+@app.get("/api/codec")
+async def get_codec():
+    """获取当前视频编码偏好"""
+    from server.config import VIDEO_CODEC
+    return {"codec": VIDEO_CODEC, "options": ["h264", "vp9", "av1"]}
+
+@app.put("/api/codec")
+async def set_codec(request: Request):
+    """设置视频编码偏好（需重建 stream 生效）"""
+    import server.config as cfg
+    body = await request.json()
+    codec = body.get("codec", "").lower()
+    if codec not in ("h264", "vp9", "av1"):
+        return JSONResponse({"error": f"unsupported codec: {codec}"}, status_code=400)
+    cfg.VIDEO_CODEC = codec
+    os.environ["VIDEO_CODEC"] = codec
+    return {"codec": codec, "message": "Codec preference updated. Reconnect viewers to apply."}
 
 if __name__ == "__main__":
     import uvicorn

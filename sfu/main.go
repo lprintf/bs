@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/pion/ice/v4"
@@ -83,11 +84,12 @@ func main() {
 
 	log.Printf("SFU starting: NAT_IP=%s UDP_PORT=%d HTTP_PORT=%d", natIP, udpPort, httpPort)
 
-	// --- MediaEngine: only H.264 (force hardware encoding via VAAPI) ---
-	// High Profile (640032) first for best quality, then Baseline as fallback.
-	// DO NOT use RegisterDefaultCodecs() — it adds VP8/VP9 and breaks VAAPI.
+	// --- MediaEngine: register H.264 + VP9 + AV1 ---
+	// Publisher SDP munging controls which codec is actually used.
+	// SFU just needs to support all options for flexibility.
 	me := &webrtc.MediaEngine{}
 	for _, codec := range []webrtc.RTPCodecParameters{
+		// H.264 High Profile (preferred for VAAPI)
 		{
 			RTPCodecCapability: webrtc.RTPCodecCapability{
 				MimeType:    webrtc.MimeTypeH264,
@@ -96,6 +98,7 @@ func main() {
 			},
 			PayloadType: 123,
 		},
+		// H.264 Constrained Baseline (fallback)
 		{
 			RTPCodecCapability: webrtc.RTPCodecCapability{
 				MimeType:    webrtc.MimeTypeH264,
@@ -120,12 +123,28 @@ func main() {
 			},
 			PayloadType: 127,
 		},
+		// VP9
+		{
+			RTPCodecCapability: webrtc.RTPCodecCapability{
+				MimeType:  webrtc.MimeTypeVP9,
+				ClockRate: 90000,
+			},
+			PayloadType: 98,
+		},
+		// AV1
+		{
+			RTPCodecCapability: webrtc.RTPCodecCapability{
+				MimeType:  webrtc.MimeTypeAV1,
+				ClockRate: 90000,
+			},
+			PayloadType: 35,
+		},
 	} {
 		if err := me.RegisterCodec(codec, webrtc.RTPCodecTypeVideo); err != nil {
-			log.Fatalf("Failed to register H.264 codec: %v", err)
+			log.Fatalf("Failed to register codec: %v", err)
 		}
 	}
-	log.Printf("MediaEngine: H.264 only (High Profile 640032 preferred, VAAPI)")
+	log.Printf("MediaEngine: H.264 + VP9 + AV1 registered (publisher SDP controls selection)")
 
 	// --- pion SettingEngine ---
 	se := webrtc.SettingEngine{}
@@ -231,11 +250,19 @@ func handlePublisher(room *Room, offer webrtc.SessionDescription) (*webrtc.Sessi
 		return nil, fmt.Errorf("new pc: %w", err)
 	}
 
-	// Reuse existing track (subscribers stay connected)
+	// Detect preferred codec from offer SDP
+	preferredMime := webrtc.MimeTypeH264 // default
+	if strings.Contains(offer.SDP, "VP9/90000") && !strings.Contains(offer.SDP, "H264/90000") {
+		preferredMime = webrtc.MimeTypeVP9
+	} else if strings.Contains(offer.SDP, "AV1/90000") && !strings.Contains(offer.SDP, "H264/90000") && !strings.Contains(offer.SDP, "VP9/90000") {
+		preferredMime = webrtc.MimeTypeAV1
+	}
+
+	// Create or reuse track (subscribers stay connected)
 	room.mu.Lock()
-	if room.videoTrack == nil {
+	if room.videoTrack == nil || room.videoTrack.Codec().MimeType != preferredMime {
 		vt, vtErr := webrtc.NewTrackLocalStaticRTP(
-			webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264},
+			webrtc.RTPCodecCapability{MimeType: preferredMime},
 			"video", "tabshare",
 		)
 		if vtErr != nil {
@@ -243,8 +270,8 @@ func handlePublisher(room *Room, offer webrtc.SessionDescription) (*webrtc.Sessi
 			return nil, fmt.Errorf("new track: %w", vtErr)
 		}
 		room.videoTrack = vt
+		log.Printf("[pub] created local track: codec=%s", preferredMime)
 	}
-	videoTrack := room.videoTrack
 	oldPC := room.publisher
 	room.publisher = pc
 	// Signal sequence reset for next RTP packet
@@ -257,7 +284,26 @@ func handlePublisher(room *Room, offer webrtc.SessionDescription) (*webrtc.Sessi
 	}
 
 	pc.OnTrack(func(remoteTrack *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
-		log.Printf("[pub] got track: %s codec=%s", remoteTrack.ID(), remoteTrack.Codec().MimeType)
+		codecMime := remoteTrack.Codec().MimeType
+		log.Printf("[pub] got track: %s codec=%s", remoteTrack.ID(), codecMime)
+
+		// Update track if actual codec differs from what we predicted
+		room.mu.Lock()
+		if room.videoTrack.Codec().MimeType != codecMime {
+			vt, vtErr := webrtc.NewTrackLocalStaticRTP(
+				webrtc.RTPCodecCapability{MimeType: codecMime},
+				"video", "tabshare",
+			)
+			if vtErr != nil {
+				room.mu.Unlock()
+				log.Printf("[pub] failed to recreate track for %s: %v", codecMime, vtErr)
+				return
+			}
+			room.videoTrack = vt
+			log.Printf("[pub] updated local track: codec=%s", codecMime)
+		}
+		videoTrack := room.videoTrack
+		room.mu.Unlock()
 
 		// Send a single PLI at start for quick first-frame, no periodic PLI
 		// (periodic PLI causes stuttering from oversized I-frames)
