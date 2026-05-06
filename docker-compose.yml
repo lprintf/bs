@@ -49,6 +49,7 @@ services:
       - DATABASE_URL=postgresql+asyncpg://tabshare:tabshare@postgres:5432/tabshare
       - REBROWSER_PATCHES_SOURCE_URL=app.js
       - REBROWSER_PATCHES_UTILITY_WORLD_NAME=util
+      - VIDEO_CODEC=${VIDEO_CODEC:-h264}
 
 volumes:
   pgdata:
