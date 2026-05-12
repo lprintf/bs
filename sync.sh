@@ -11,7 +11,7 @@
 set -euo pipefail
 
 # ---------- 配置（可通过命令行参数或环境变量覆盖） ----------
-REMOTE="${1:-${SYNC_REMOTE:-shawn@192.168.0.24}}"
+REMOTE="${1:-${SYNC_REMOTE:-shawn@192.168.0.26}}"
 REMOTE_PATH="${2:-${SYNC_PATH:-~/bs}}"
 LOCAL_DIR="$(cd "$(dirname "$0")" && pwd)"
 

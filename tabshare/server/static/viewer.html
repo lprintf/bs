@@ -712,6 +712,7 @@
                             hideNavOverlay();
                             if (msg.tab_id >= 0) {
                                 if (!myTabs.includes(msg.tab_id)) myTabs.push(msg.tab_id);
+                                saveTabs();
                                 switchTab(msg.tab_id);
                             }
                         }
@@ -1165,8 +1166,22 @@
             setInterval(pollEncoderType, 3000);
             setTimeout(pollEncoderType, 1500);
 
-            // ─── Local Tab Bar (per-viewer, not synced with backend) ───
-            let myTabs = [activeTabId]; // 本地 tab 列表，初始只有 URL 中的 tab
+            // ─── Local Tab Bar (per-viewer, sessionStorage 持久化) ───
+            const TAB_STORE_KEY = `viewer_tabs_${browserId}`;
+            let myTabs = (() => {
+                try {
+                    const saved = JSON.parse(sessionStorage.getItem(TAB_STORE_KEY));
+                    if (Array.isArray(saved) && saved.length) {
+                        if (!saved.includes(activeTabId)) saved.push(activeTabId);
+                        return saved;
+                    }
+                } catch {}
+                return [activeTabId];
+            })();
+
+            function saveTabs() {
+                sessionStorage.setItem(TAB_STORE_KEY, JSON.stringify(myTabs));
+            }
 
             function renderTabBar() {
                 tabBar.innerHTML = myTabs.map(tid => {
@@ -1196,6 +1211,7 @@
                 tabLabel.textContent = `${browserId}/${activeTabId}`;
                 document.title = `TabShare - ${browserId}/${activeTabId}`;
                 history.replaceState(null, '', `/viewer/${browserId}/${activeTabId}`);
+                saveTabs();
                 renderTabBar();
 
                 // Fast path: if PC is connected and we have a sub_id, use /switch
@@ -1228,6 +1244,7 @@
                 try {
                     await fetch(`/api/admin/browsers/${browserId}/tabs/${tid}`, { method: 'DELETE' });
                     myTabs = myTabs.filter(t => t !== tid);
+                    saveTabs();
                     if (tid === activeTabId) {
                         if (myTabs.length > 0) {
                             switchTab(myTabs[0]);
@@ -1257,6 +1274,7 @@
                     const tab = await res.json();
                     if (tab.tab_id >= 0) {
                         myTabs.push(tab.tab_id);
+                        saveTabs();
                         switchTab(tab.tab_id);
                     }
                 } catch (e) {
