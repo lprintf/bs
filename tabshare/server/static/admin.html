@@ -99,6 +99,26 @@
             color: #888;
             margin-top: 4px;
         }
+        .selection-tools {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+        .selection-count {
+            font-size: 0.85rem;
+            color: #666;
+            margin-right: 0.25rem;
+        }
+        .tab-select {
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+        }
+        .btn:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
     </style>
 </head>
 
@@ -183,16 +203,23 @@
             <div class="card">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
                     <div class="card-title" style="margin-bottom:0;">Tab Management</div>
-                    <button class="btn btn-primary" onclick="refreshData()">Refresh</button>
+                    <div class="selection-tools">
+                        <span class="selection-count" id="selectedTabCount">0 selected</span>
+                        <button class="btn btn-success" id="createWorkbenchBtn" onclick="showCreateWorkbenchModal()" disabled>Create Workbench</button>
+                        <button class="btn btn-secondary" onclick="clearWorkbenchSelection()">Clear</button>
+                        <button class="btn btn-primary" onclick="refreshData()">Refresh</button>
+                    </div>
                 </div>
                 <table>
                     <thead>
                         <tr>
+                            <th><input type="checkbox" class="tab-select" id="selectAllTabs" onchange="toggleAllTabs(this)"></th>
                             <th>Tab ID</th>
                             <th>Browser</th>
                             <th>URL</th>
                             <th>Viewport</th>
                             <th>Viewers</th>
+                            <th>Workbench</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -201,6 +228,28 @@
                 <div id="tabEmpty" class="empty-state" style="display:none;">
                     <div class="empty-state-icon">📑</div>
                     <div>No tabs found</div>
+                </div>
+            </div>
+            <div class="card">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+                    <div class="card-title" style="margin-bottom:0;">Workbenches</div>
+                    <button class="btn btn-primary" onclick="refreshData()">Refresh</button>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Name</th>
+                            <th>Tabs</th>
+                            <th>Active</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="workbenchList"></tbody>
+                </table>
+                <div id="workbenchEmpty" class="empty-state" style="display:none;">
+                    <div class="empty-state-icon">🧩</div>
+                    <div>No workbenches created</div>
                 </div>
             </div>
         </div>
@@ -288,6 +337,28 @@
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary"
                             onclick="hideModal('createTabModal')">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Create</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Create Workbench Modal -->
+        <div id="createWorkbenchModal" class="modal">
+            <div class="modal-content">
+                <div class="modal-title">Create Workbench</div>
+                <form id="createWorkbenchForm" onsubmit="createWorkbench(event)">
+                    <div class="form-group">
+                        <label>Name</label>
+                        <input type="text" class="form-control" id="newWorkbenchName" placeholder="Workbench name">
+                    </div>
+                    <div class="form-group">
+                        <label>Selected Tabs</label>
+                        <div id="newWorkbenchTabSummary" class="proxy-tag none">0 selected</div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary"
+                            onclick="hideModal('createWorkbenchModal')">Cancel</button>
                         <button type="submit" class="btn btn-primary">Create</button>
                     </div>
                 </form>
@@ -385,13 +456,45 @@
 
         // ── Data Loading ──
         let dashboardData = {};
+        let workbenchData = [];
+        const selectedWorkbenchTabs = new Set();
+
+        function tabKey(browserId, tabId) {
+            return `${browserId}:${tabId}`;
+        }
+
+        function parseTabKey(key) {
+            const [browserId, tabId] = key.split(':').map(Number);
+            return { browser_id: browserId, tab_id: tabId };
+        }
+
+        function updateWorkbenchSelectionControls() {
+            const count = selectedWorkbenchTabs.size;
+            document.getElementById('selectedTabCount').textContent = `${count} selected`;
+            document.getElementById('createWorkbenchBtn').disabled = count === 0;
+            const selectAll = document.getElementById('selectAllTabs');
+            if (selectAll) {
+                const boxes = [...document.querySelectorAll('.tab-row-select:not(:disabled)')];
+                selectAll.checked = boxes.length > 0 && boxes.every(box => box.checked);
+                selectAll.indeterminate = boxes.some(box => box.checked) && !selectAll.checked;
+                selectAll.disabled = boxes.length === 0;
+            }
+        }
 
         async function refreshData() {
             try {
                 dashboardData = await api('GET', '/api/admin/dashboard');
+                try {
+                    const workbenches = await api('GET', '/api/admin/workbenches');
+                    workbenchData = workbenches.workbenches || [];
+                } catch (e) {
+                    workbenchData = [];
+                    console.warn('Workbench API unavailable:', e.message);
+                }
                 renderDashboard();
                 renderBrowsers();
                 renderTabs();
+                renderWorkbenches();
             } catch (e) {
                 showToast('Load failed: ' + e.message, 'error');
             }
@@ -446,10 +549,23 @@
             const browsers = dashboardData.browsers || [];
             const allTabs = [];
             browsers.forEach(b => (b.tabs || []).forEach(t => allTabs.push(t)));
+            const persistedWorkbenchByTab = new Map();
+            workbenchData.forEach(w => (w.tabs || []).forEach(t => {
+                persistedWorkbenchByTab.set(tabKey(t.browser_id, t.tab_id), w);
+            }));
+            const liveKeys = new Set(allTabs.map(t => tabKey(t.browser_id, t.tab_id)));
+            for (const key of [...selectedWorkbenchTabs]) {
+                const tab = allTabs.find(t => tabKey(t.browser_id, t.tab_id) === key);
+                const eligible = tab?.persistent && tab?.created_by === 'admin';
+                if (!liveKeys.has(key) || !eligible || tab?.workbench_id || persistedWorkbenchByTab.has(key)) {
+                    selectedWorkbenchTabs.delete(key);
+                }
+            }
 
             if (allTabs.length === 0) {
                 list.innerHTML = '';
                 empty.style.display = 'block';
+                updateWorkbenchSelectionControls();
                 return;
             }
             empty.style.display = 'none';
@@ -458,19 +574,116 @@
                 const url = t.url || 'about:blank';
                 const shortUrl = url.length > 50 ? url.substring(0, 50) + '…' : url;
                 const vp = t.viewport || { width: 1280, height: 720 };
+                const key = tabKey(t.browser_id, t.tab_id);
+                const checked = selectedWorkbenchTabs.has(key) ? 'checked' : '';
+                const persistedWorkbench = persistedWorkbenchByTab.get(key);
+                const assigned = !!t.workbench_id || !!persistedWorkbench;
+                const eligible = t.persistent && t.created_by === 'admin' && !assigned;
+                const disabled = eligible ? '' : 'disabled';
+                const workbenchName = t.workbench_name || persistedWorkbench?.name;
+                const workbenchId = t.workbench_id || persistedWorkbench?.id;
+                const workbenchLabel = assigned
+                    ? `<span class="status-badge status-processing">${workbenchName || ('#' + workbenchId)}</span>`
+                    : !eligible
+                        ? '<span class="proxy-tag none">temporary</span>'
+                    : '<span class="proxy-tag none">none</span>';
                 return `
             <tr>
+                <td><input type="checkbox" class="tab-select tab-row-select" data-key="${key}" ${checked} ${disabled} onchange="toggleWorkbenchTab('${key}', this.checked)"></td>
                 <td><strong>${t.tab_id}</strong></td>
                 <td>${t.browser_id}</td>
                 <td title="${url}">${shortUrl}</td>
                 <td><span class="viewport-tag">${vp.width}×${vp.height}</span></td>
                 <td>${t.viewer_count || 0}</td>
+                <td>${workbenchLabel}</td>
                 <td>
                     <a class="view-btn" href="/viewer/${t.browser_id}/${t.tab_id}" target="_blank">View</a>
                     <button class="btn btn-danger" onclick="deleteTab(${t.browser_id},${t.tab_id})">Close</button>
                 </td>
             </tr>`;
             }).join('');
+            updateWorkbenchSelectionControls();
+        }
+
+        function toggleWorkbenchTab(key, checked) {
+            if (checked) {
+                selectedWorkbenchTabs.add(key);
+            } else {
+                selectedWorkbenchTabs.delete(key);
+            }
+            updateWorkbenchSelectionControls();
+        }
+
+        function toggleAllTabs(checkbox) {
+            document.querySelectorAll('.tab-row-select:not(:disabled)').forEach(box => {
+                box.checked = checkbox.checked;
+                toggleWorkbenchTab(box.dataset.key, checkbox.checked);
+            });
+            updateWorkbenchSelectionControls();
+        }
+
+        function clearWorkbenchSelection() {
+            selectedWorkbenchTabs.clear();
+            document.querySelectorAll('.tab-row-select').forEach(box => { box.checked = false; });
+            updateWorkbenchSelectionControls();
+        }
+
+        function showCreateWorkbenchModal() {
+            if (!selectedWorkbenchTabs.size) return;
+            const tabs = [...selectedWorkbenchTabs].map(key => key.replace(':', '/')).join(', ');
+            document.getElementById('newWorkbenchTabSummary').textContent = tabs;
+            document.getElementById('newWorkbenchName').value = '';
+            showModal('createWorkbenchModal');
+        }
+
+        async function createWorkbench(e) {
+            e.preventDefault();
+            const tabs = [...selectedWorkbenchTabs].map(parseTabKey);
+            if (!tabs.length) return;
+            const name = document.getElementById('newWorkbenchName').value.trim();
+            try {
+                await api('POST', '/api/admin/workbenches', { name, tabs });
+                hideModal('createWorkbenchModal');
+                clearWorkbenchSelection();
+                showToast('Workbench created', 'success');
+                refreshData();
+            } catch (e) {
+                showToast(e.message, 'error');
+            }
+        }
+
+        function renderWorkbenches() {
+            const list = document.getElementById('workbenchList');
+            const empty = document.getElementById('workbenchEmpty');
+            if (!workbenchData.length) {
+                list.innerHTML = '';
+                empty.style.display = 'block';
+                return;
+            }
+            empty.style.display = 'none';
+            list.innerHTML = workbenchData.map(w => `
+            <tr>
+                <td><strong>${w.id}</strong></td>
+                <td>${w.name || '<em>unnamed</em>'}</td>
+                <td>${w.tab_count || 0}</td>
+                <td>${w.active_tab_count || 0}</td>
+                <td>
+                    <a class="view-btn" href="${w.url}" target="_blank">Open</a>
+                    <button class="btn btn-danger" onclick="deleteWorkbench(${w.id})">Delete</button>
+                </td>
+            </tr>
+        `).join('');
+        }
+
+        async function deleteWorkbench(id) {
+            if (!confirm(`Delete workbench ${id}?`)) return;
+            try {
+                await api('DELETE', `/api/admin/workbenches/${id}`);
+                showToast('Workbench deleted', 'success');
+                refreshData();
+            } catch (e) {
+                showToast(e.message, 'error');
+            }
         }
 
         // ── Actions ──

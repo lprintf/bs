@@ -1,6 +1,7 @@
 import asyncio
 import httpx
 from rebrowser_playwright.async_api import Page
+from server.config import SFU_URL
 
 class TabPublisher:
     """
@@ -44,14 +45,38 @@ class TabPublisher:
                 return
             delay = min(delay + 2, 15)  # 逐步增大间隔，最大 15s
 
-    async def resume(self):
+    async def resume(self) -> bool:
         """有 viewer 连接时恢复推流"""
-        if self._closed or not self._paused:
-            return
+        if self._closed:
+            return False
+        was_paused = self._paused
         self._paused = False
-        print(f"TabPublisher[{self.tab_id}]: resuming (viewer connected)")
+        if was_paused:
+            print(f"TabPublisher[{self.tab_id}]: resuming (viewer connected)")
         if not await self._ensure_stream():
             asyncio.ensure_future(self._retry_loop())
+            return False
+        return True
+
+    async def ensure_active(self, timeout_ms: int = 8000) -> bool:
+        """Resume publishing and wait until the SFU has fresh RTP for this room."""
+        if self._closed:
+            return False
+
+        quick_wait = max(250, min(1200, timeout_ms // 3))
+        if await self.resume() and await self._wait_sfu_ready(quick_wait):
+            return True
+
+        # Browser-side WebRTC can occasionally report ready while the SFU room is stale.
+        # Re-capture once so fast switching does not attach to an empty target room.
+        print(f"TabPublisher[{self.tab_id}]: stream not fresh, forcing republish")
+        self._cancel_publish()
+        await self._clear_webrtc()
+        self._paused = False
+        if not await self._ensure_stream():
+            asyncio.ensure_future(self._retry_loop())
+            return False
+        return await self._wait_sfu_ready(max(1000, timeout_ms - quick_wait))
 
     async def pause(self):
         """所有 viewer 断开后暂停推流，释放编码器资源"""
@@ -60,9 +85,17 @@ class TabPublisher:
         self._paused = True
         self._cancel_publish()
         print(f"TabPublisher[{self.tab_id}]: pausing (no viewers)")
+        await self._clear_webrtc()
+
+    async def _clear_webrtc(self):
+        """Close the page-side publisher PeerConnection and release the capture track."""
         try:
             await self.page.evaluate("""() => {
                 if (window._webrtc) {
+                    if (window._webrtc._statsInterval) {
+                        try { clearInterval(window._webrtc._statsInterval); } catch(e) {}
+                        window._webrtc._statsInterval = null;
+                    }
                     if (window._webrtc.pc) { try { window._webrtc.pc.close(); } catch(e) {} }
                     if (window._webrtc.stream) {
                         window._webrtc.stream.getTracks().forEach(t => t.stop());
@@ -73,7 +106,7 @@ class TabPublisher:
                 }
             }""")
         except Exception as e:
-            print(f"TabPublisher[{self.tab_id}]: pause cleanup error: {e}")
+            print(f"TabPublisher[{self.tab_id}]: WebRTC cleanup error: {e}")
 
     def _on_navigated(self, frame):
         if frame == self.page.main_frame:
@@ -111,13 +144,33 @@ class TabPublisher:
                 # Use a dummy subscriber switch trick won't work; just re-publish triggers keyframe.
                 # Send a direct PLI request - we'll add a /pli endpoint to SFU
                 resp = await client.post(
-                    f"http://127.0.0.1:8088/pli?room={self.tab_id}",
+                    f"{SFU_URL}/pli?room={self.tab_id}",
                     timeout=3.0,
                 )
                 if resp.status_code == 200:
                     print(f"TabPublisher[{self.tab_id}]: PLI requested")
         except Exception as e:
             print(f"TabPublisher[{self.tab_id}]: PLI request failed: {e}")
+
+    async def _wait_sfu_ready(self, timeout_ms: int) -> bool:
+        """Wait for the SFU room to have a fresh local RTP track."""
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    f"{SFU_URL}/ready?room={self.tab_id}&timeout_ms={max(1, timeout_ms)}",
+                    timeout=max(1.0, timeout_ms / 1000 + 1.0),
+                )
+            if resp.status_code == 200:
+                return True
+            # Backward compatibility while an older SFU binary is still running.
+            if resp.status_code == 404 and "404 page not found" in resp.text:
+                await asyncio.sleep(0.3)
+                return True
+            print(f"TabPublisher[{self.tab_id}]: SFU not ready: {resp.status_code} {resp.text.strip()}")
+            return False
+        except Exception as e:
+            print(f"TabPublisher[{self.tab_id}]: SFU readiness check failed: {e}")
+            return False
 
     async def _broadcast(self, event: dict):
         """Send event to all viewers of this tab."""
@@ -324,11 +377,9 @@ class TabPublisher:
                 return False
 
             # Step 2: Python 端直接请求 SFU（完全绕过浏览器代理）
-            import httpx
-            sfu_url = "http://127.0.0.1:8088/offer"
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
-                    f"{sfu_url}?room={room}&role=pub",
+                    f"{SFU_URL}/offer?room={room}&role=pub",
                     json={"sdp": offer_sdp},
                     timeout=10.0,
                 )
@@ -381,18 +432,9 @@ class TabPublisher:
             return
         self._cancel_publish()
         print(f"TabPublisher[{self.tab_id}]: refreshing stream (viewport changed)")
-        try:
-            await self.page.evaluate("""() => {
-                if (window._webrtc) {
-                    if (window._webrtc.pc) { try { window._webrtc.pc.close(); } catch(e) {} }
-                    if (window._webrtc.stream) {
-                        window._webrtc.stream.getTracks().forEach(t => t.stop());
-                    }
-                    window._webrtc.ready = false;
-                }
-            }""")
-        except Exception:
-            pass
+        await self._clear_webrtc()
+        if self._paused:
+            return
         self._publish_task = asyncio.ensure_future(self._ensure_stream())
 
     def close(self):

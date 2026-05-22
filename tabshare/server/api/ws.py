@@ -151,6 +151,7 @@ async def ws_input(websocket: WebSocket, browser_id: int, tab_id: int):
                     w = max(320, min(3840, int(w)))
                     h = max(240, min(2160, int(h)))
                     await page.set_viewport_size({"width": w, "height": h})
+                    await browser_manager.update_persistent_tab_viewport(browser_id, tab_id, w, h)
                     if tab.publisher:
                         await tab.publisher.refresh_stream()
             except Exception as e:

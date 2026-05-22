@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TabShare Workbench</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #0a0a0f;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+            font-family: -apple-system, 'Segoe UI', Roboto, sans-serif;
+        }
+
+        /* ── Toolbar ── */
+        .toolbar {
+            background: #1e1e2a;
+            border-bottom: 1px solid #2a2a3a;
+            padding: 0 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            height: 42px;
+            flex-shrink: 0;
+            z-index: 1100;
+        }
+
+        .toolbar-sub {
+            background: #181824;
+            border-bottom: 1px solid #22223a;
+            padding: 0 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            height: 34px;
+            flex-shrink: 0;
+            z-index: 1099;
+        }
+
+        .tb-btn {
+            background: #2a2a3e;
+            border: 1px solid #3a3a50;
+            color: #ccc;
+            padding: 4px 10px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.15s;
+            line-height: 1;
+            white-space: nowrap;
+        }
+
+        .tb-btn:hover {
+            background: #3a3a50;
+            color: #fff;
+        }
+
+        .tb-btn.primary {
+            background: #4a6cf7;
+            border-color: #5b7cf8;
+            color: #fff;
+        }
+
+        .tb-btn.primary:hover {
+            background: #5b7cf8;
+        }
+
+        .tb-btn.active {
+            background: #4a6cf7;
+            border-color: #5b7cf8;
+            color: #fff;
+        }
+
+        .tb-btn.sm {
+            font-size: 12px;
+            padding: 3px 8px;
+        }
+
+        .url-bar {
+            flex: 1;
+            display: flex;
+            gap: 4px;
+            min-width: 0;
+        }
+
+        .url-input {
+            flex: 1;
+            background: #12121a;
+            border: 1px solid #2a2a3a;
+            color: #ddd;
+            padding: 4px 10px;
+            border-radius: 5px;
+            font-size: 13px;
+            outline: none;
+            min-width: 0;
+        }
+
+        .url-input:focus {
+            border-color: #4a6cf7;
+        }
+
+        .tb-select {
+            background: #12121a;
+            border: 1px solid #2a2a3a;
+            color: #ccc;
+            padding: 3px 6px;
+            border-radius: 5px;
+            font-size: 12px;
+            outline: none;
+            cursor: pointer;
+        }
+
+        .tb-select:focus {
+            border-color: #4a6cf7;
+        }
+
+        .tb-sep {
+            width: 1px;
+            height: 20px;
+            background: #2a2a3a;
+            flex-shrink: 0;
+        }
+
+        .tb-label {
+            color: #667;
+            font-size: 11px;
+            white-space: nowrap;
+        }
+
+        .tb-info {
+            color: #556;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 11px;
+            white-space: nowrap;
+        }
+
+        .mode-badge {
+            display: none;
+            color: #b8c2ff;
+            background: rgba(74, 108, 247, 0.16);
+            border: 1px solid rgba(74, 108, 247, 0.35);
+            border-radius: 4px;
+            padding: 2px 7px;
+            font-size: 11px;
+            white-space: nowrap;
+        }
+
+        body.workbench .mode-badge {
+            display: inline-flex;
+        }
+
+        /* WebRTC Stats */
+        .stats-bar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 11px;
+            white-space: nowrap;
+        }
+
+        .stat-item {
+            display: flex;
+            align-items: center;
+            gap: 3px;
+        }
+
+        .stat-label {
+            color: #556;
+        }
+
+        .stat-value {
+            color: #8f8;
+            font-weight: 600;
+        }
+
+        .enc-badge {
+            font-size: 10px;
+            font-weight: 700;
+            padding: 1px 5px;
+            border-radius: 3px;
+            letter-spacing: 0.5px;
+        }
+        .enc-hw { background: rgba(0,200,80,0.25); color: #4f4; }
+        .enc-sw { background: rgba(255,60,60,0.25); color: #f66; }
+        .enc-idle { background: rgba(120,120,120,0.2); color: #888; }
+
+        .stat-value.warn {
+            color: #fa0;
+        }
+
+        .stat-value.bad {
+            color: #f55;
+        }
+
+        .admin-link {
+            color: #8a8aaa;
+            text-decoration: none;
+            font-size: 12px;
+            padding: 4px 8px;
+            border-radius: 4px;
+            transition: all 0.15s;
+            white-space: nowrap;
+        }
+
+        .admin-link:hover {
+            color: #4a6cf7;
+            background: rgba(74, 108, 247, 0.1);
+        }
+
+        /* ── Video Area ── */
+        .video-area {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+            position: relative;
+        }
+
+        #screen {
+            display: block;
+            cursor: default;
+            outline: none;
+        }
+
+        /* Scale modes */
+        #screen.scale-fit {
+            max-width: 100%;
+            max-height: 100%;
+            width: auto;
+            height: auto;
+            object-fit: contain;
+        }
+
+        #screen.scale-fill {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        #screen.scale-real {
+            width: auto;
+            height: auto;
+        }
+
+        #status {
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 4px;
+            transition: opacity 0.5s ease;
+            white-space: nowrap;
+        }
+
+        .status-connecting {
+            background: rgba(255, 170, 0, 0.15);
+            color: #ffa500;
+            border: 1px solid rgba(255, 170, 0, 0.3);
+        }
+
+        .status-connected {
+            background: rgba(0, 200, 80, 0.15);
+            color: #0c6;
+            border: 1px solid rgba(0, 200, 80, 0.3);
+        }
+
+        .status-error {
+            background: rgba(255, 60, 60, 0.15);
+            color: #f44;
+            border: 1px solid rgba(255, 60, 60, 0.3);
+        }
+
+        /* Navigation loading overlay */
+        #nav-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(10, 10, 15, 0.75);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 900;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+
+        #nav-overlay.visible {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid rgba(255, 255, 255, 0.1);
+            border-top-color: rgba(120, 160, 255, 0.8);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .nav-text {
+            margin-top: 16px;
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 14px;
+            letter-spacing: 0.5px;
+        }
+
+        /* ── Tab Bar (View Group) ── */
+        .tab-bar {
+            background: #151520;
+            border-bottom: 1px solid #1e1e2e;
+            display: flex;
+            align-items: stretch;
+            height: 32px;
+            flex-shrink: 0;
+            overflow-x: auto;
+            z-index: 1098;
+        }
+
+        .tab-bar::-webkit-scrollbar {
+            height: 0;
+        }
+
+        .tab-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 0 12px;
+            font-size: 12px;
+            color: #777;
+            cursor: pointer;
+            border-right: 1px solid #1e1e2e;
+            white-space: nowrap;
+            transition: all 0.15s;
+            user-select: none;
+        }
+
+        .tab-item:hover {
+            background: #1e1e2e;
+            color: #aaa;
+        }
+
+        .tab-item.active {
+            background: #252538;
+            color: #ddd;
+            border-bottom: 2px solid #4a6cf7;
+        }
+
+        .tab-item .tab-close {
+            font-size: 14px;
+            line-height: 1;
+            color: #555;
+            cursor: pointer;
+            padding: 0 2px;
+            border-radius: 3px;
+        }
+
+        .tab-item .tab-close:hover {
+            color: #f44;
+            background: rgba(255, 60, 60, 0.15);
+        }
+
+        .tab-new {
+            display: flex;
+            align-items: center;
+            padding: 0 10px;
+            font-size: 16px;
+            color: #555;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .tab-new:hover {
+            color: #4a6cf7;
+            background: #1e1e2e;
+        }
+
+        .tab-domain {
+            color: #566;
+            font-size: 10px;
+        }
+
+        /* Download toast */
+        .dl-toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #1e1e2e;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 12px 16px;
+            color: #ccc;
+            font-size: 13px;
+            z-index: 2000;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+            animation: slideUp 0.3s ease;
+            max-width: 400px;
+        }
+
+        .dl-toast a {
+            color: #4a6cf7;
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        .dl-toast a:hover {
+            text-decoration: underline;
+        }
+
+        .dl-toast .dl-close {
+            cursor: pointer;
+            color: #555;
+            font-size: 16px;
+            margin-left: 8px;
+        }
+
+        .dl-toast .dl-close:hover {
+            color: #f44;
+        }
+
+        @keyframes slideUp {
+            from {
+                transform: translateY(20px);
+                opacity: 0;
+            }
+
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+    </style>
+    <!-- Native WebRTC, no SDK needed -->
+</head>
+
+<body>
+    <!-- Toolbar Row 1: Navigation -->
+    <div class="toolbar" id="toolbar">
+        <button class="tb-btn" onclick="navBack()" title="Back">←</button>
+        <button class="tb-btn" onclick="navForward()" title="Forward">→</button>
+        <button class="tb-btn" onclick="navReload()" title="Reload">↻</button>
+        <div class="tb-sep"></div>
+        <div class="url-bar">
+            <input type="text" id="urlInput" class="url-input" placeholder="Enter URL…">
+            <button class="tb-btn primary" onclick="navGo()">Go</button>
+        </div>
+        <div class="tb-sep"></div>
+        <span class="tb-label" id="tabLabel"></span>
+        <span class="mode-badge" id="modeBadge">Workbench</span>
+        <div class="tb-sep"></div>
+        <button class="tb-btn sm" id="translateBtn" onclick="translatePage()"
+            title="Translate current page">🌐 Translate</button>
+        <input type="file" id="fileUpload" style="display:none" onchange="uploadFile(this)">
+        <a href="/admin" class="admin-link">Admin ↗</a>
+    </div>
+    <!-- Toolbar Row 2: View Controls -->
+    <div class="toolbar-sub" id="toolbar-sub">
+        <span class="tb-label">Resolution</span>
+        <select class="tb-select" id="resSelect">
+            <option value="auto">Auto (fit window)</option>
+            <option value="1280x720">1280 × 720 (HD)</option>
+            <option value="1366x768">1366 × 768</option>
+            <option value="1440x900">1440 × 900</option>
+            <option value="1600x900">1600 × 900</option>
+            <option value="1920x1080" selected>1920 × 1080 (FHD)</option>
+            <option value="2560x1440">2560 × 1440 (2K)</option>
+            <option value="3840x2160">3840 × 2160 (4K)</option>
+        </select>
+        <div class="tb-sep"></div>
+        <span class="tb-label">Scale</span>
+        <button class="tb-btn sm active" id="scaleFit" onclick="setScale('fit')" title="Fit in window">Fit</button>
+        <button class="tb-btn sm" id="scaleFill" onclick="setScale('fill')" title="Fill window">Fill</button>
+        <button class="tb-btn sm" id="scaleReal" onclick="setScale('real')" title="1:1 pixels">1:1</button>
+        <div class="tb-sep"></div>
+        <button class="tb-btn sm" onclick="toggleFullscreen()" title="Toggle Fullscreen">⛶ Fullscreen</button>
+        <div style="flex:1"></div>
+        <div class="stats-bar" id="statsBar">
+            <span class="stat-item"><span class="stat-label">FPS</span> <span class="stat-value"
+                    id="statFps">--</span></span>
+            <span class="stat-item"><span class="stat-label">Bitrate</span> <span class="stat-value"
+                    id="statBitrate">--</span></span>
+            <span class="stat-item"><span class="stat-label">Codec</span> <span class="stat-value"
+                    id="statCodec">--</span> <span class="enc-badge enc-idle"
+                    id="encBadge">--</span></span>
+            <span class="stat-item"><span class="stat-label">Loss</span> <span class="stat-value"
+                    id="statLoss">--</span></span>
+            <span class="stat-item"><span class="stat-label">Jitter</span> <span class="stat-value"
+                    id="statJitter">--</span></span>
+        </div>
+        <div class="tb-sep"></div>
+        <span id="status" class="status-connecting">Connecting…</span>
+        <div class="tb-sep"></div>
+        <span class="tb-info" id="vpInfo">--</span>
+    </div>
+    <!-- Tab Bar (View Group) -->
+    <div class="tab-bar" id="tabBar">
+        <!-- Populated by JS -->
+    </div>
+
+    <div class="video-area" id="videoArea">
+        <div id="nav-overlay">
+            <div class="spinner"></div>
+            <div class="nav-text">Loading…</div>
+        </div>
+        <video id="screen" class="scale-fit" autoplay playsinline muted tabindex="-1"></video>
+    </div>
+
+    <!-- Hidden input element for IME support -->
+    <textarea id="ime-trap"
+        style="position: absolute; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; z-index: -1;"
+        autofocus></textarea>
+
+    <script>
+        window.TABSHARE_VIEWER_MODE = 'workbench';
+    </script>
+    <script src="/static/js/viewer.js"></script>
+</body>
+
+</html>

@@ -10,6 +10,7 @@ import os
 from dataclasses import asdict
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 from rebrowser_playwright.async_api import async_playwright, BrowserContext, Page
 from server.config import CHROME_PATH, BROWSER_DATA_DIR
 from server.services.fingerprint import load_or_create_fingerprint, save_fingerprint, Fingerprint
@@ -61,22 +62,55 @@ UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 _STEALTH_JS_PATH = Path(__file__).parent / "stealth.js"
 
 
+def _url_hostname(url: str | None) -> str | None:
+    """Return the normalized HTTP(S) hostname for a URL."""
+    if not url:
+        return None
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return None
+    if parsed.scheme not in ("http", "https"):
+        return None
+    return parsed.hostname.lower() if parsed.hostname else None
+
+
 class TabInfo:
     """Holds state for a single tab within a browser."""
-    def __init__(self, tab_id: int, browser_id: int, page: Page, publisher: TabPublisher):
+    def __init__(
+        self,
+        tab_id: int,
+        browser_id: int,
+        page: Page,
+        publisher: TabPublisher,
+        persistent: bool = False,
+        created_by: str = "runtime",
+    ):
         self.tab_id = tab_id
         self.browser_id = browser_id
         self.page = page
         self.publisher = publisher
+        self.persistent = persistent
+        self.created_by = created_by
         self.viewers: list = []  # WebSocket connections
         self.downloads: list[dict] = []  # [{filename, path, size, timestamp}]
         self.pending_filechooser = None  # Playwright FileChooser object
         self.last_input_ws = None  # 最后发送输入的 viewer ws
+        self.allowed_hostname: str | None = None  # 工作台域名锁
+        self.workbench_id: int | None = None
+        self.workbench_name: str | None = None
+        self._domain_route_installed = False
 
     @property
     def room_name(self) -> str:
         """SFU room name."""
         return f"{self.browser_id}_{self.tab_id}"
+
+    def is_url_allowed(self, url: str) -> bool:
+        """Return whether the URL is allowed by the tab's domain lock."""
+        if not self.allowed_hostname:
+            return True
+        return _url_hostname(url) == self.allowed_hostname
 
     def to_dict(self) -> dict:
         try:
@@ -98,6 +132,12 @@ class TabInfo:
             "viewport": vp or DEFAULT_VIEWPORT,
             "viewer_count": len(self.viewers),
             "status": "closed" if (self.page.is_closed() if self.page else True) else "active",
+            "persistent": self.persistent,
+            "created_by": self.created_by,
+            "domain_locked": bool(self.allowed_hostname),
+            "allowed_hostname": self.allowed_hostname,
+            "workbench_id": self.workbench_id,
+            "workbench_name": self.workbench_name,
         }
 
 
@@ -113,6 +153,7 @@ class BrowserInstance:
         locale: Optional[str] = None,
         timezone: Optional[str] = None,
         chrome_version: Optional[str] = None,
+        restore_on_start: bool = False,
     ):
         self.browser_id = browser_id
         self.name = name
@@ -121,6 +162,7 @@ class BrowserInstance:
         self.locale_override = locale
         self.timezone_override = timezone
         self.chrome_version = chrome_version  # None = 真实二进制版本
+        self.restore_on_start = restore_on_start
         self.status = "closed"  # closed | launching | idle | error
         self.playwright = None
         self.context: Optional[BrowserContext] = None
@@ -350,13 +392,25 @@ class BrowserInstance:
             print(f"[Proxy] URL 解析失败: {e}")
             return None
 
-    async def create_tab(self, url: str = "about:blank", viewport: dict | None = None) -> TabInfo:
+    async def create_tab(
+        self,
+        url: str = "about:blank",
+        viewport: dict | None = None,
+        tab_id: int | None = None,
+        persistent: bool = False,
+        created_by: str = "runtime",
+    ) -> TabInfo:
         """Create a new tab (Page) within this browser context."""
         if not self.context or self.status != "idle":
             raise RuntimeError(f"Browser {self.browser_id} not ready ({self.status})")
 
-        tab_id = self._tab_counter
-        self._tab_counter += 1
+        if tab_id is None:
+            tab_id = self._tab_counter
+            self._tab_counter += 1
+        else:
+            if tab_id in self.tabs:
+                raise ValueError(f"Tab {tab_id} already exists")
+            self._tab_counter = max(self._tab_counter, tab_id + 1)
         log_prefix = f"{self.browser_id}/{tab_id}"
 
         page = await self.context.new_page()
@@ -382,8 +436,18 @@ class BrowserInstance:
         # Start publisher — room name is "browserId_tabId"
         room_name = f"{self.browser_id}_{tab_id}"
         publisher = TabPublisher(page, room_name)
-        tab_info = TabInfo(tab_id, self.browser_id, page, publisher)
+        tab_info = TabInfo(
+            tab_id,
+            self.browser_id,
+            page,
+            publisher,
+            persistent=persistent,
+            created_by=created_by,
+        )
         self.tabs[tab_id] = tab_info
+        page.on("framenavigated", lambda frame: asyncio.ensure_future(
+            self._handle_tab_navigation(tab_info, frame)
+        ))
         asyncio.create_task(publisher.start())
 
         # Download interception
@@ -406,6 +470,125 @@ class BrowserInstance:
 
         print(f"[Browser {self.browser_id}] Created tab {tab_id} → {url}")
         return tab_info
+
+    async def _handle_tab_navigation(self, tab: TabInfo, frame):
+        if frame != tab.page.main_frame or not tab.persistent:
+            return
+        try:
+            from server.services.browser_manager import browser_manager
+            await browser_manager.update_persistent_tab_url(tab.browser_id, tab.tab_id, tab.page.url)
+        except Exception:
+            pass
+
+    async def lock_tab_to_current_domain(
+        self,
+        tab_id: int,
+        workbench_id: int | None = None,
+        workbench_name: str | None = None,
+    ) -> TabInfo:
+        """Lock a tab so its main frame can only navigate within its current hostname."""
+        tab = self.tabs.get(tab_id)
+        if not tab:
+            raise KeyError(f"Tab {tab_id} not found")
+        if tab.page.is_closed():
+            raise ValueError(f"Tab {tab_id} is closed")
+
+        hostname = _url_hostname(tab.page.url)
+        if not hostname:
+            raise ValueError(f"Tab {tab_id} has no HTTP(S) domain to lock")
+
+        tab.allowed_hostname = hostname
+        tab.workbench_id = workbench_id
+        tab.workbench_name = workbench_name
+        await self._install_domain_route(tab)
+        return tab
+
+    async def assign_tab_to_workbench(
+        self,
+        tab_id: int,
+        workbench_id: int,
+        workbench_name: str,
+        allowed_hostname: str,
+    ) -> TabInfo:
+        """Attach an active tab to a persisted workbench and apply its domain lock."""
+        tab = self.tabs.get(tab_id)
+        if not tab:
+            raise KeyError(f"Tab {tab_id} not found")
+        if tab.page.is_closed():
+            raise ValueError(f"Tab {tab_id} is closed")
+        tab.allowed_hostname = allowed_hostname
+        tab.workbench_id = workbench_id
+        tab.workbench_name = workbench_name
+        await self._install_domain_route(tab)
+        if not tab.is_url_allowed(tab.page.url):
+            await tab.page.goto(f"https://{allowed_hostname}/", timeout=60000, wait_until="domcontentloaded")
+        return tab
+
+    def clear_tab_workbench(self, tab_id: int, workbench_id: int | None = None):
+        """Clear the workbench assignment from an active tab."""
+        tab = self.tabs.get(tab_id)
+        if not tab:
+            return
+        if workbench_id is not None and tab.workbench_id != workbench_id:
+            return
+        tab.allowed_hostname = None
+        tab.workbench_id = None
+        tab.workbench_name = None
+
+    async def _install_domain_route(self, tab: TabInfo):
+        if tab._domain_route_installed:
+            return
+
+        async def domain_guard(route):
+            await self._handle_domain_locked_route(tab, route)
+
+        await tab.page.route("**/*", domain_guard)
+        tab._domain_route_installed = True
+
+    async def _handle_domain_locked_route(self, tab: TabInfo, route):
+        try:
+            request = route.request
+            is_main_navigation = False
+            try:
+                is_main_navigation = (
+                    request.is_navigation_request()
+                    and request.frame == tab.page.main_frame
+                )
+            except Exception:
+                is_main_navigation = False
+
+            if is_main_navigation and tab.allowed_hostname and not tab.is_url_allowed(request.url):
+                await route.abort("blockedbyclient")
+                await self._notify_navigation_blocked(tab, request.url)
+                return
+
+            await route.continue_()
+        except Exception:
+            try:
+                await route.continue_()
+            except Exception:
+                pass
+
+    async def _notify_tab_viewers(self, tab: TabInfo, event: dict):
+        from server.services.browser_manager import browser_manager
+        await browser_manager.broadcast_to_viewers(tab.browser_id, tab.tab_id, event)
+
+    async def _notify_navigation_blocked(self, tab: TabInfo, url: str | None):
+        await self._notify_tab_viewers(tab, {
+            "type": "navigation_blocked",
+            "url": url,
+            "current_url": tab.page.url if not tab.page.is_closed() else None,
+            "allowed_hostname": tab.allowed_hostname,
+            "message": f"工作台页面只能停留在 {tab.allowed_hostname}",
+        })
+
+    async def _notify_popup_blocked(self, tab: TabInfo, url: str | None):
+        await self._notify_tab_viewers(tab, {
+            "type": "popup_blocked",
+            "url": url,
+            "allowed_hostname": tab.allowed_hostname,
+            "message": "工作台不支持弹出新页面",
+        })
 
     async def _handle_download(self, tab: TabInfo, download, tab_dir: Path):
         """Handle a browser download event."""
@@ -448,6 +631,20 @@ class BrowserInstance:
         """Handle target=_blank popup: register as new tab, notify triggering viewer."""
         ws = source_tab.last_input_ws
         try:
+            if source_tab.allowed_hostname:
+                popup_url = None
+                try:
+                    popup_url = popup_page.url
+                except Exception:
+                    pass
+                try:
+                    await popup_page.close()
+                except Exception:
+                    pass
+                await self._notify_popup_blocked(source_tab, popup_url)
+                print(f"[Browser {self.browser_id}] Popup blocked for workbench tab {source_tab.tab_id}")
+                return
+
             # Immediately notify viewer to show loading overlay
             if ws:
                 try:
@@ -475,7 +672,14 @@ class BrowserInstance:
 
             # Start publisher
             publisher = TabPublisher(popup_page, room_name)
-            tab_info = TabInfo(tab_id, self.browser_id, popup_page, publisher)
+            tab_info = TabInfo(
+                tab_id,
+                self.browser_id,
+                popup_page,
+                publisher,
+                persistent=False,
+                created_by="popup",
+            )
             self.tabs[tab_id] = tab_info
             asyncio.create_task(publisher.start())
 
@@ -532,6 +736,9 @@ class BrowserInstance:
         tab = self.tabs.get(tab_id)
         if not tab:
             raise KeyError(f"Tab {tab_id} not found")
+        if tab.allowed_hostname and not tab.is_url_allowed(url):
+            await self._notify_navigation_blocked(tab, url)
+            raise ValueError(f"Navigation outside {tab.allowed_hostname} is not allowed")
         await tab.page.goto(url, timeout=60000, wait_until="domcontentloaded")
         return {"url": tab.page.url}
 
@@ -547,7 +754,11 @@ class BrowserInstance:
         tab = self.tabs.get(tab_id)
         if not tab:
             raise KeyError(f"Tab {tab_id} not found")
-        await tab.page.go_back(timeout=10000)
+        try:
+            await tab.page.go_back(timeout=10000)
+        except Exception:
+            if not tab.allowed_hostname:
+                raise
         return {"url": tab.page.url}
 
     async def go_forward(self, tab_id: int):
@@ -555,7 +766,11 @@ class BrowserInstance:
         tab = self.tabs.get(tab_id)
         if not tab:
             raise KeyError(f"Tab {tab_id} not found")
-        await tab.page.go_forward(timeout=10000)
+        try:
+            await tab.page.go_forward(timeout=10000)
+        except Exception:
+            if not tab.allowed_hostname:
+                raise
         return {"url": tab.page.url}
 
     async def close(self):
@@ -597,6 +812,7 @@ class BrowserInstance:
             "proxy": self.proxy,
             "user_data_dir": self.user_data_dir,
             "chrome_version": self.chrome_version,
+            "restore_on_start": self.restore_on_start,
             "status": self.status,
             "fingerprint": fp_info,
             "tab_count": len(self.tabs),

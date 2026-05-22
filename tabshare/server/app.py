@@ -50,6 +50,19 @@ async def viewer(browser_id: int, tab_id: int):
         html_content = f.read()
     return HTMLResponse(html_content)
 
+@app.get("/workbench")
+async def workbench():
+    return RedirectResponse("/admin")
+
+@app.get("/workbench/{workbench_id}")
+async def workbench_by_id(workbench_id: int):
+    workbench_file = static_dir / "workbench.html"
+    if not workbench_file.exists():
+        return HTMLResponse("<h1>workbench.html not found</h1>", status_code=404)
+    with open(workbench_file, "r", encoding="utf-8") as f:
+        html_content = f.read()
+    return HTMLResponse(html_content)
+
 @app.api_route("/api/sfu/offer", methods=["POST"])
 async def sfu_offer_proxy(request: Request):
     """Proxy SDP offer to Go SFU (for viewer connections from outside)."""
@@ -77,6 +90,24 @@ async def sfu_switch_proxy(request: Request):
                 f"{SFU_URL}/switch?{query}",
                 timeout=5.0,
             )
+        try:
+            data = resp.json()
+        except Exception:
+            data = {"error": resp.text}
+        return JSONResponse(content=data, status_code=resp.status_code)
+    except Exception as e:
+        return JSONResponse(content={"error": str(e)}, status_code=502)
+
+@app.api_route("/api/sfu/ready", methods=["GET", "POST"])
+async def sfu_ready_proxy(request: Request):
+    """Proxy SFU room readiness checks."""
+    query = str(request.url.query)
+    try:
+        async with httpx.AsyncClient() as client:
+            if request.method == "GET":
+                resp = await client.get(f"{SFU_URL}/ready?{query}", timeout=5.0)
+            else:
+                resp = await client.post(f"{SFU_URL}/ready?{query}", timeout=5.0)
         try:
             data = resp.json()
         except Exception:
