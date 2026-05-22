@@ -7,6 +7,8 @@ certs/
 data
 # 参考项目
 ref/
+!安全合规/ref/
+!安全合规/ref/ref.md
 
 # 临时文件
 tmp/
@@ -38,4 +40,7 @@ Thumbs.db
 .claude/
 # Deck shell output (auto-generated)
 .deck-shell/
-tabshare/https:/
+
+# 网关相关,这版先不考虑身份认证
+安全合规
+demo
