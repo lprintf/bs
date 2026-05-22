@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/pion/ice/v4"
 	"github.com/pion/rtcp"
@@ -25,11 +26,12 @@ type Room struct {
 	subscribers map[string]*Subscriber // id -> subscriber
 	recorder    *Recorder              // WebM recorder (nil = not recording)
 	// RTP sequence/timestamp continuity across publisher reconnects
-	seqOffset uint16
-	tsOffset  uint32
-	lastSeq   uint16
-	lastTS    uint32
-	seqReset  bool
+	seqOffset    uint16
+	tsOffset     uint32
+	lastSeq      uint16
+	lastTS       uint32
+	seqReset     bool
+	lastPacketAt time.Time
 }
 
 // Subscriber holds a subscriber's connection and track sender.
@@ -44,8 +46,8 @@ var (
 	roomsMu sync.RWMutex
 	api     *webrtc.API
 	// Global subscriber registry for cross-room switching
-	allSubs   = map[string]*Subscriber{}
-	allSubsMu sync.RWMutex
+	allSubs      = map[string]*Subscriber{}
+	allSubsMu    sync.RWMutex
 	subIDCounter uint64
 	subIDMu      sync.Mutex
 )
@@ -173,6 +175,7 @@ func main() {
 	// --- HTTP signaling ---
 	http.HandleFunc("/offer", handleOffer)
 	http.HandleFunc("/switch", handleSwitch)
+	http.HandleFunc("/ready", handleReady)
 	http.HandleFunc("/pli", handlePLI)
 	http.HandleFunc("/recording", handleRecording)
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -341,6 +344,7 @@ func handlePublisher(room *Room, offer webrtc.SessionDescription) (*webrtc.Sessi
 			pkt.Header.Timestamp += room.tsOffset
 			room.lastSeq = pkt.Header.SequenceNumber
 			room.lastTS = pkt.Header.Timestamp
+			room.lastPacketAt = time.Now()
 			room.mu.Unlock()
 
 			// Tee to recorder (clone to avoid buf reuse corruption)
@@ -543,6 +547,62 @@ func cleanupSub(subID string) {
 	room.mu.Unlock()
 }
 
+func waitForFreshTrack(room *Room, timeout time.Duration) (*webrtc.TrackLocalStaticRTP, bool) {
+	deadline := time.Now().Add(timeout)
+	for {
+		room.mu.RLock()
+		track := room.videoTrack
+		lastPacketAt := room.lastPacketAt
+		fresh := track != nil && !lastPacketAt.IsZero() && time.Since(lastPacketAt) < 3*time.Second
+		room.mu.RUnlock()
+
+		if fresh {
+			return track, true
+		}
+		if timeout <= 0 || time.Now().After(deadline) {
+			return nil, false
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// handleReady waits until a room has received recent publisher RTP.
+func handleReady(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		http.Error(w, "GET or POST only", http.StatusMethodNotAllowed)
+		return
+	}
+
+	roomName := r.URL.Query().Get("room")
+	timeoutMs := 0
+	if raw := r.URL.Query().Get("timeout_ms"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			timeoutMs = parsed
+		}
+	}
+	if roomName == "" {
+		http.Error(w, "need ?room=xxx", http.StatusBadRequest)
+		return
+	}
+
+	room := getRoom(roomName)
+	if _, ok := waitForFreshTrack(room, time.Duration(timeoutMs)*time.Millisecond); !ok {
+		http.Error(w, "no publisher in room", http.StatusNotFound)
+		return
+	}
+
+	room.mu.RLock()
+	lastPacketAt := room.lastPacketAt
+	room.mu.RUnlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":         "ready",
+		"room":           roomName,
+		"last_packet_at": lastPacketAt.Format(time.RFC3339Nano),
+	})
+}
+
 // handleSwitch moves a subscriber from one room's track to another without re-negotiation.
 func handleSwitch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -552,6 +612,12 @@ func handleSwitch(w http.ResponseWriter, r *http.Request) {
 
 	subID := r.URL.Query().Get("sub_id")
 	newRoom := r.URL.Query().Get("room")
+	timeoutMs := 0
+	if raw := r.URL.Query().Get("timeout_ms"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			timeoutMs = parsed
+		}
+	}
 	if subID == "" || newRoom == "" {
 		http.Error(w, "need ?sub_id=xxx&room=yyy", http.StatusBadRequest)
 		return
@@ -566,26 +632,23 @@ func handleSwitch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	targetRoom := getRoom(newRoom)
-	targetRoom.mu.RLock()
-	newTrack := targetRoom.videoTrack
-	targetRoom.mu.RUnlock()
-
-	if newTrack == nil {
+	newTrack, ok := waitForFreshTrack(targetRoom, time.Duration(timeoutMs)*time.Millisecond)
+	if !ok {
 		http.Error(w, "no publisher in target room", http.StatusNotFound)
 		return
 	}
-
-	// Remove from old room
-	oldRoom := getRoom(sub.room)
-	oldRoom.mu.Lock()
-	delete(oldRoom.subscribers, subID)
-	oldRoom.mu.Unlock()
 
 	// Replace track (no re-negotiation needed!)
 	if err := sub.sender.ReplaceTrack(newTrack); err != nil {
 		http.Error(w, fmt.Sprintf("replace track: %v", err), http.StatusInternalServerError)
 		return
 	}
+
+	// Remove from old room only after ReplaceTrack succeeds.
+	oldRoom := getRoom(sub.room)
+	oldRoom.mu.Lock()
+	delete(oldRoom.subscribers, subID)
+	oldRoom.mu.Unlock()
 
 	// Update subscriber's room
 	sub.room = newRoom
