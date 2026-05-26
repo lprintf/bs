@@ -393,6 +393,12 @@ class BrowserManager:
                 import asyncio
                 asyncio.ensure_future(tab.publisher.pause())
 
+    def move_viewer(self, old_browser_id: int, old_tab_id: int, new_browser_id: int, new_tab_id: int, ws):
+        if old_browser_id == new_browser_id and old_tab_id == new_tab_id:
+            return
+        self.remove_viewer(old_browser_id, old_tab_id, ws)
+        self.add_viewer(new_browser_id, new_tab_id, ws)
+
     async def broadcast_to_viewers(self, browser_id: int, tab_id: int, event: dict):
         """Push an event to all viewers of a tab."""
         tab = self.find_tab(browser_id, tab_id)

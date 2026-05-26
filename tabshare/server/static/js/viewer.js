@@ -72,8 +72,11 @@
 
     let ws, pc;
     let sfuSubId = null; // SFU subscriber ID for fast track switching
+    let displayedRoom = '';
     let _popupOverlayTimer = null;
     let statusFadeTimer = null;
+    let pendingControlSwitch = null;
+    let switchInProgress = false;
 
     function setStatus(text, type) {
         statusEl.textContent = text;
@@ -125,6 +128,7 @@
     async function connectSFU() {
         if (pc) { try { pc.close(); } catch (e) { } pc = null; }
         if (!activeRoom) return;
+        const connectRoom = activeRoom;
         try {
             setStatus('Connecting to stream…', 'connecting');
             await prepareActiveStream(6000);
@@ -141,6 +145,7 @@
                 console.log('[viewer] got track:', ev.track.kind);
                 if (ev.track.kind === 'video') {
                     video.srcObject = ev.streams[0] || new MediaStream([ev.track]);
+                    displayedRoom = connectRoom;
                     setStatus('Connected', 'connected');
                     hideNavOverlay();
                     imeTrap.focus({ preventScroll: true });
@@ -194,7 +199,10 @@
             return Promise.resolve(false);
         }
         const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-        ws = new WebSocket(`${protocol}//${location.host}/ws/tab/${activeBrowserId}/${activeTabId}`);
+        const wsUrl = isWorkbench
+            ? `${protocol}//${location.host}/ws/workbench/${initialWorkbenchId}?browser_id=${activeBrowserId}&tab_id=${activeTabId}`
+            : `${protocol}//${location.host}/ws/tab/${activeBrowserId}/${activeTabId}`;
+        ws = new WebSocket(wsUrl);
 
         return new Promise((resolve) => {
             let settled = false;
@@ -218,7 +226,18 @@
             ws.onmessage = (ev) => {
                 try {
                     const msg = JSON.parse(ev.data);
-                    if (msg.type === 'nav_start') {
+                    if (msg.type === 'switch_tab_done') {
+                        if (pendingControlSwitch) {
+                            pendingControlSwitch.resolve(msg);
+                            pendingControlSwitch = null;
+                        }
+                    } else if (msg.type === 'switch_tab_error') {
+                        if (pendingControlSwitch) {
+                            pendingControlSwitch.reject(new Error(msg.message || 'Control switch failed'));
+                            pendingControlSwitch = null;
+                        }
+                        showNotice(msg.message || '工作台切换失败');
+                    } else if (msg.type === 'nav_start') {
                         showNavOverlay();
                         setStatus('Page loading…', 'connecting');
                     } else if (msg.type === 'nav_done') {
@@ -622,6 +641,64 @@
     }
     video.addEventListener('playing', startFrameWatch, { once: true });
 
+    function waitForVideoFrame(timeoutMs = 1200) {
+        return new Promise((resolve) => {
+            if (!('requestVideoFrameCallback' in HTMLVideoElement.prototype)) {
+                setTimeout(() => resolve(false), Math.min(timeoutMs, 300));
+                return;
+            }
+            let done = false;
+            const timer = setTimeout(() => {
+                if (!done) {
+                    done = true;
+                    resolve(false);
+                }
+            }, timeoutMs);
+            video.requestVideoFrameCallback(() => {
+                if (!done) {
+                    done = true;
+                    clearTimeout(timer);
+                    resolve(true);
+                }
+            });
+        });
+    }
+
+    async function readDecodedVideoStats() {
+        if (!pc) return null;
+        try {
+            const stats = await pc.getStats();
+            let best = null;
+            stats.forEach(report => {
+                if (report.type === 'inbound-rtp' && report.kind === 'video') {
+                    best = {
+                        framesDecoded: report.framesDecoded || 0,
+                        bytesReceived: report.bytesReceived || 0,
+                    };
+                }
+            });
+            return best;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    async function waitForDecodedVideoProgress(timeoutMs = 1800) {
+        const baseline = await readDecodedVideoStats();
+        if (!baseline) return await waitForVideoFrame(timeoutMs);
+
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+            await sleep(120);
+            const current = await readDecodedVideoStats();
+            if (!current) continue;
+            if ((current.framesDecoded || 0) > (baseline.framesDecoded || 0)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // ─── WebRTC Stats Polling ───
     const statEls = {
         fps: document.getElementById('statFps'),
@@ -810,6 +887,42 @@
         return false;
     }
 
+    function switchControlTab(browserId, tabId) {
+        if (!isWorkbench) return Promise.resolve(true);
+        if (!ws || ws.readyState !== WebSocket.OPEN) return Promise.resolve(false);
+
+        if (pendingControlSwitch) {
+            pendingControlSwitch.reject(new Error('Superseded by another switch'));
+            pendingControlSwitch = null;
+        }
+
+        return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+                if (pendingControlSwitch) {
+                    pendingControlSwitch = null;
+                    reject(new Error('Control switch timed out'));
+                }
+            }, 3000);
+
+            pendingControlSwitch = {
+                resolve: (msg) => {
+                    clearTimeout(timer);
+                    resolve(msg);
+                },
+                reject: (err) => {
+                    clearTimeout(timer);
+                    reject(err);
+                },
+            };
+
+            ws.send(JSON.stringify({
+                type: 'switch_tab',
+                browser_id: browserId,
+                tab_id: tabId,
+            }));
+        });
+    }
+
     async function switchStreamFast() {
         if (!canReuseStream()) return false;
 
@@ -818,23 +931,43 @@
         setStatus('Switching…', 'connecting');
         showNavOverlay();
 
-        if (ws) {
-            ws.onclose = null;
-            try { ws.close(); } catch (e) { }
-        }
+        if (isWorkbench) {
+            if (!await prepareActiveStream(8000)) return false;
+        } else {
+            if (ws) {
+                ws.onclose = null;
+                try { ws.close(); } catch (e) { }
+            }
 
-        const wsReady = await connectWS({ connectStream: false });
-        if (!wsReady) return false;
-        await prepareActiveStream(8000);
+            const wsReady = await connectWS({ connectStream: false });
+            if (!wsReady) return false;
+            await prepareActiveStream(8000);
+        }
 
         for (let attempt = 0; attempt < 8; attempt++) {
             try {
                 const res = await fetch(
-                    `/api/sfu/switch?sub_id=${encodeURIComponent(subId)}&room=${encodeURIComponent(room)}&timeout_ms=1200`,
+                    `/api/sfu/switch?sub_id=${encodeURIComponent(subId)}&room=${encodeURIComponent(room)}&timeout_ms=2500`,
                     { method: 'POST' }
                 );
                 if (res.ok) {
                     console.log('[viewer] fast switch to', room);
+                    const decoded = await waitForDecodedVideoProgress(3200);
+                    if (!decoded) {
+                        console.warn('[viewer] fast switch produced no decoded frame, falling back to reconnect');
+                        return false;
+                    }
+                    if (isWorkbench) {
+                        try {
+                            if (!await switchControlTab(activeBrowserId, activeTabId)) return false;
+                        } catch (e) {
+                            console.warn('[viewer] control switch failed:', e);
+                            return false;
+                        }
+                    }
+                    displayedRoom = room;
+                    hideNavOverlay();
+                    setStatus('Connected', 'connected');
                     if (typeof startFrameWatch === 'function') startFrameWatch();
                     return true;
                 }
@@ -883,8 +1016,8 @@
             const isActive = ref.browser_id === activeBrowserId && ref.tab_id === activeTabId;
             const domain = ref.allowed_hostname ? `<span class="tab-domain">${ref.allowed_hostname}</span>` : '';
             const close = isWorkbench ? '' : `<span class="tab-close" onclick="event.stopPropagation(); closeTab(${ref.browser_id}, ${ref.tab_id})">×</span>`;
-            return `<div class="tab-item${isActive ? ' active' : ''}" data-key="${tabRefKey(ref)}">
-            <span class="tab-title" onclick="switchTab(${ref.browser_id}, ${ref.tab_id})">${ref.browser_id}/${ref.tab_id}</span>
+            return `<div class="tab-item${isActive ? ' active' : ''}" data-key="${tabRefKey(ref)}" onclick="switchTab(${ref.browser_id}, ${ref.tab_id})">
+            <span class="tab-title">${ref.browser_id}/${ref.tab_id}</span>
             ${domain}
             ${close}
         </div>`;
@@ -910,11 +1043,17 @@
     }
 
     async function switchTab(browserId, tabId) {
+        if (switchInProgress) {
+            console.log('[viewer] switch ignored while another switch is in progress');
+            return;
+        }
         if (tabId === undefined) {
             tabId = browserId;
             browserId = activeBrowserId;
         }
-        if (browserId === activeBrowserId && tabId === activeTabId) return;
+        const targetRoom = `${browserId}_${tabId}`;
+        console.log('[viewer] switch tab click:', targetRoom, 'active=', activeRoom, 'displayed=', displayedRoom);
+        if (browserId === activeBrowserId && tabId === activeTabId && displayedRoom === targetRoom) return;
 
         const exists = myTabs.some(t => t.browser_id === browserId && t.tab_id === tabId);
         if (!exists) {
@@ -925,16 +1064,21 @@
             myTabs.push({ browser_id: browserId, tab_id: tabId });
         }
 
-        setActiveTab(browserId, tabId);
-        saveTabs();
-        renderTabBar();
+        switchInProgress = true;
+        try {
+            setActiveTab(browserId, tabId);
+            saveTabs();
+            renderTabBar();
 
-        if (await switchStreamFast()) {
-            return;
+            if (await switchStreamFast()) {
+                return;
+            }
+
+            // Slow path: full reconnect
+            startSession();
+        } finally {
+            switchInProgress = false;
         }
-
-        // Slow path: full reconnect
-        startSession();
     }
 
     async function closeTab(browserId, tabId) {

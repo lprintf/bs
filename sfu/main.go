@@ -18,7 +18,7 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
-// Room holds a publisher track and subscribers.
+// Room holds a publisher stream and subscribers currently viewing it.
 type Room struct {
 	mu          sync.RWMutex
 	videoTrack  *webrtc.TrackLocalStaticRTP
@@ -34,11 +34,26 @@ type Room struct {
 	lastPacketAt time.Time
 }
 
-// Subscriber holds a subscriber's connection and track sender.
+// Subscriber holds a subscriber connection and its stable outbound RTP stream.
 type Subscriber struct {
-	pc     *webrtc.PeerConnection
-	sender *webrtc.RTPSender
-	room   string // current room name
+	mu          sync.Mutex
+	id          string
+	pc          *webrtc.PeerConnection
+	sender      *webrtc.RTPSender
+	outputTrack *webrtc.TrackLocalStaticRTP
+	room        string // current source room name
+	codecMime   string
+
+	// Per-subscriber RTP continuity. These offsets are reset on every source
+	// switch so the browser sees one continuous RTP stream.
+	seqOffset    uint16
+	tsOffset     uint32
+	lastSeq      uint16
+	lastTS       uint32
+	hasWritten   bool
+	needKeyframe bool
+	lastPLIAt    time.Time
+	closed       bool
 }
 
 var (
@@ -228,7 +243,7 @@ func handleOffer(w http.ResponseWriter, r *http.Request) {
 	var subID string
 
 	if role == "pub" {
-		answer, err = handlePublisher(room, offer)
+		answer, err = handlePublisher(roomName, room, offer)
 	} else {
 		answer, subID, err = handleSubscriber(room, roomName, offer)
 	}
@@ -247,7 +262,7 @@ func handleOffer(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func handlePublisher(room *Room, offer webrtc.SessionDescription) (*webrtc.SessionDescription, error) {
+func handlePublisher(roomName string, room *Room, offer webrtc.SessionDescription) (*webrtc.SessionDescription, error) {
 	pc, err := api.NewPeerConnection(webrtc.Configuration{})
 	if err != nil {
 		return nil, fmt.Errorf("new pc: %w", err)
@@ -261,7 +276,8 @@ func handlePublisher(room *Room, offer webrtc.SessionDescription) (*webrtc.Sessi
 		preferredMime = webrtc.MimeTypeAV1
 	}
 
-	// Create or reuse track (subscribers stay connected)
+	// Create or update codec metadata for the room. Subscribers do not bind to
+	// this track directly; each subscriber has its own stable outbound track.
 	room.mu.Lock()
 	if room.videoTrack == nil || room.videoTrack.Codec().MimeType != preferredMime {
 		vt, vtErr := webrtc.NewTrackLocalStaticRTP(
@@ -305,7 +321,6 @@ func handlePublisher(room *Room, offer webrtc.SessionDescription) (*webrtc.Sessi
 			room.videoTrack = vt
 			log.Printf("[pub] updated local track: codec=%s", codecMime)
 		}
-		videoTrack := room.videoTrack
 		room.mu.Unlock()
 
 		// Send a single PLI at start for quick first-frame, no periodic PLI
@@ -352,44 +367,18 @@ func handlePublisher(room *Room, offer webrtc.SessionDescription) (*webrtc.Sessi
 			rec := room.recorder
 			room.mu.RUnlock()
 			if rec != nil {
-				clonedPkt := &rtp.Packet{
-					Header:  pkt.Header,
-					Payload: make([]byte, len(pkt.Payload)),
-				}
-				copy(clonedPkt.Payload, pkt.Payload)
-				rec.PushRTP(clonedPkt)
+				rec.PushRTP(cloneRTPPacket(pkt))
 			}
 
-			// H.264 keyframe detection: NAL type 5 = IDR frame
 			pktCount++
-			if len(pkt.Payload) > 0 {
-				nalType := pkt.Payload[0] & 0x1F
-				if nalType == 5 { // IDR = keyframe
-					kfCount++
-				} else if nalType == 24 && len(pkt.Payload) > 3 {
-					// STAP-A: check first NAL unit inside
-					innerNalType := pkt.Payload[3] & 0x1F
-					if innerNalType == 5 {
-						kfCount++
-					}
-				} else if nalType == 28 && len(pkt.Payload) > 1 {
-					// FU-A: check start bit + NAL type
-					fuHeader := pkt.Payload[1]
-					isStart := (fuHeader & 0x80) != 0
-					fuNalType := fuHeader & 0x1F
-					if isStart && fuNalType == 5 {
-						kfCount++
-					}
-				}
+			if isKeyframeStart(codecMime, pkt) {
+				kfCount++
 			}
 			if pktCount%300 == 0 {
 				log.Printf("[pub] RTP stats: %d pkts, %d keyframes (%.1f%%)", pktCount, kfCount, float64(kfCount)/float64(pktCount)*100)
 			}
 
-			if writeErr := videoTrack.WriteRTP(pkt); writeErr != nil {
-				log.Printf("[pub] track write error: %v", writeErr)
-				return
-			}
+			forwardSourcePacket(roomName, room, codecMime, pkt)
 		}
 	})
 
@@ -422,25 +411,42 @@ func handlePublisher(room *Room, offer webrtc.SessionDescription) (*webrtc.Sessi
 
 func handleSubscriber(room *Room, roomName string, offer webrtc.SessionDescription) (*webrtc.SessionDescription, string, error) {
 	room.mu.RLock()
-	track := room.videoTrack
+	sourceTrack := room.videoTrack
 	room.mu.RUnlock()
 
-	if track == nil {
+	if sourceTrack == nil {
 		return nil, "", fmt.Errorf("no publisher in room yet")
 	}
+	codecMime := sourceTrack.Codec().MimeType
 
 	pc, err := api.NewPeerConnection(webrtc.Configuration{})
 	if err != nil {
 		return nil, "", fmt.Errorf("new pc: %w", err)
 	}
 
-	rtpSender, err := pc.AddTrack(track)
+	outputTrack, err := webrtc.NewTrackLocalStaticRTP(
+		webrtc.RTPCodecCapability{MimeType: codecMime},
+		"video", "tabshare",
+	)
+	if err != nil {
+		return nil, "", fmt.Errorf("new subscriber track: %w", err)
+	}
+
+	rtpSender, err := pc.AddTrack(outputTrack)
 	if err != nil {
 		return nil, "", fmt.Errorf("add track: %w", err)
 	}
 
 	subID := nextSubID()
-	sub := &Subscriber{pc: pc, sender: rtpSender, room: roomName}
+	sub := &Subscriber{
+		id:           subID,
+		pc:           pc,
+		sender:       rtpSender,
+		outputTrack:  outputTrack,
+		room:         roomName,
+		codecMime:    codecMime,
+		needKeyframe: true,
+	}
 
 	// Read RTCP (PLI, NACK etc.) from viewer and forward to publisher
 	go func() {
@@ -449,15 +455,15 @@ func handleSubscriber(room *Room, roomName string, offer webrtc.SessionDescripti
 			if _, _, rtcpErr := rtpSender.Read(buf); rtcpErr != nil {
 				return
 			}
-			// Forward PLI/NACK to publisher for better encoding adaptation
-			sendPLI(room)
+			// Forward viewer feedback to the current publisher.
+			sendPLI(sub.currentRoom())
 		}
 	}()
 
 	pc.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
 		log.Printf("[sub:%s] ICE state: %s", subID, state.String())
 		if state == webrtc.ICEConnectionStateConnected {
-			sendPLI(room)
+			sendPLI(sub.currentRoom())
 		}
 		if state == webrtc.ICEConnectionStateFailed || state == webrtc.ICEConnectionStateDisconnected {
 			pc.Close()
@@ -541,10 +547,153 @@ func cleanupSub(subID string) {
 		return
 	}
 
-	room := getRoom(sub.room)
+	sub.mu.Lock()
+	sub.closed = true
+	roomName := sub.room
+	sub.mu.Unlock()
+
+	room := getRoom(roomName)
 	room.mu.Lock()
 	delete(room.subscribers, subID)
 	room.mu.Unlock()
+}
+
+func (s *Subscriber) currentRoom() *Room {
+	s.mu.Lock()
+	roomName := s.room
+	s.mu.Unlock()
+	return getRoom(roomName)
+}
+
+func forwardSourcePacket(roomName string, room *Room, codecMime string, pkt *rtp.Packet) {
+	room.mu.RLock()
+	subs := make([]*Subscriber, 0, len(room.subscribers))
+	for _, sub := range room.subscribers {
+		subs = append(subs, sub)
+	}
+	room.mu.RUnlock()
+
+	for _, sub := range subs {
+		sub.writeSourceRTP(roomName, codecMime, pkt)
+	}
+}
+
+func (s *Subscriber) writeSourceRTP(sourceRoom string, codecMime string, pkt *rtp.Packet) {
+	var requestPLI bool
+	var writeErr error
+
+	s.mu.Lock()
+	if s.closed || s.room != sourceRoom {
+		s.mu.Unlock()
+		return
+	}
+	if s.codecMime != codecMime {
+		s.mu.Unlock()
+		return
+	}
+
+	if s.needKeyframe && !isKeyframeStart(codecMime, pkt) {
+		if time.Since(s.lastPLIAt) > 700*time.Millisecond {
+			s.lastPLIAt = time.Now()
+			requestPLI = true
+		}
+		s.mu.Unlock()
+		if requestPLI {
+			sendPLI(getRoom(sourceRoom))
+		}
+		return
+	}
+
+	out := cloneRTPPacket(pkt)
+	if s.needKeyframe {
+		if s.hasWritten {
+			s.seqOffset = s.lastSeq - out.Header.SequenceNumber + 1
+			s.tsOffset = s.lastTS - out.Header.Timestamp + 1
+		} else {
+			s.seqOffset = 0
+			s.tsOffset = 0
+		}
+		s.needKeyframe = false
+		log.Printf("[sub:%s] source ready: room=%s codec=%s seqOffset=%d tsOffset=%d", s.id, sourceRoom, codecMime, s.seqOffset, s.tsOffset)
+	}
+
+	out.Header.SequenceNumber += s.seqOffset
+	out.Header.Timestamp += s.tsOffset
+	s.lastSeq = out.Header.SequenceNumber
+	s.lastTS = out.Header.Timestamp
+	s.hasWritten = true
+	writeErr = s.outputTrack.WriteRTP(out)
+	s.mu.Unlock()
+
+	if writeErr != nil {
+		log.Printf("[sub:%s] track write error: %v", s.id, writeErr)
+	}
+}
+
+func cloneRTPPacket(pkt *rtp.Packet) *rtp.Packet {
+	cloned := &rtp.Packet{
+		Header:  pkt.Header,
+		Payload: make([]byte, len(pkt.Payload)),
+	}
+	cloned.Header.Extensions = append([]rtp.Extension(nil), pkt.Header.Extensions...)
+	copy(cloned.Payload, pkt.Payload)
+	return cloned
+}
+
+func isKeyframeStart(codecMime string, pkt *rtp.Packet) bool {
+	switch strings.ToLower(codecMime) {
+	case strings.ToLower(webrtc.MimeTypeH264):
+		return isH264KeyframeStart(pkt.Payload)
+	case strings.ToLower(webrtc.MimeTypeVP9):
+		return isVP9KeyframeStart(pkt.Payload)
+	case strings.ToLower(webrtc.MimeTypeAV1):
+		return true
+	default:
+		return true
+	}
+}
+
+func isH264KeyframeStart(payload []byte) bool {
+	if len(payload) == 0 {
+		return false
+	}
+	nalType := payload[0] & 0x1F
+	switch nalType {
+	case 5, 7, 8:
+		return true
+	case 24: // STAP-A
+		offset := 1
+		for offset+2 <= len(payload) {
+			size := int(payload[offset])<<8 | int(payload[offset+1])
+			offset += 2
+			if size <= 0 || offset+size > len(payload) {
+				return false
+			}
+			innerType := payload[offset] & 0x1F
+			if innerType == 5 || innerType == 7 || innerType == 8 {
+				return true
+			}
+			offset += size
+		}
+	case 28: // FU-A
+		if len(payload) < 2 {
+			return false
+		}
+		isStart := (payload[1] & 0x80) != 0
+		fuNalType := payload[1] & 0x1F
+		return isStart && fuNalType == 5
+	}
+	return false
+}
+
+func isVP9KeyframeStart(payload []byte) bool {
+	if len(payload) == 0 {
+		return false
+	}
+	descriptor := payload[0]
+	interPicturePredicted := (descriptor & 0x40) != 0
+	beginningOfFrame := (descriptor & 0x08) != 0
+	return beginningOfFrame && !interPicturePredicted
 }
 
 func waitForFreshTrack(room *Room, timeout time.Duration) (*webrtc.TrackLocalStaticRTP, bool) {
@@ -637,21 +786,33 @@ func handleSwitch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no publisher in target room", http.StatusNotFound)
 		return
 	}
+	targetCodec := newTrack.Codec().MimeType
 
-	// Replace track (no re-negotiation needed!)
-	if err := sub.sender.ReplaceTrack(newTrack); err != nil {
-		http.Error(w, fmt.Sprintf("replace track: %v", err), http.StatusInternalServerError)
+	sub.mu.Lock()
+	if sub.closed {
+		sub.mu.Unlock()
+		http.Error(w, "subscriber closed", http.StatusNotFound)
 		return
 	}
+	if sub.codecMime != targetCodec {
+		sub.mu.Unlock()
+		http.Error(w, fmt.Sprintf("codec mismatch: subscriber=%s target=%s", sub.codecMime, targetCodec), http.StatusConflict)
+		return
+	}
+	oldRoomName := sub.room
+	sub.room = newRoom
+	sub.needKeyframe = true
+	sub.lastPLIAt = time.Now()
+	sub.mu.Unlock()
 
-	// Remove from old room only after ReplaceTrack succeeds.
-	oldRoom := getRoom(sub.room)
+	// Move the subscriber between room registries. Packet forwarding checks the
+	// subscriber's current room as well, so stale snapshots from the old room are
+	// dropped after this point.
+	oldRoom := getRoom(oldRoomName)
 	oldRoom.mu.Lock()
 	delete(oldRoom.subscribers, subID)
 	oldRoom.mu.Unlock()
 
-	// Update subscriber's room
-	sub.room = newRoom
 	targetRoom.mu.Lock()
 	targetRoom.subscribers[subID] = sub
 	targetRoom.mu.Unlock()
@@ -659,7 +820,7 @@ func handleSwitch(w http.ResponseWriter, r *http.Request) {
 	// Send PLI to new room's publisher for immediate keyframe
 	sendPLI(targetRoom)
 
-	log.Printf("[switch] %s → room %s", subID, newRoom)
+	log.Printf("[switch] %s %s → room %s", subID, oldRoomName, newRoom)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "room": newRoom})
