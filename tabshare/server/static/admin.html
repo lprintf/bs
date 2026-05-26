@@ -427,6 +427,15 @@
         // ── Utils ──
         function showModal(id) { document.getElementById(id).classList.add('show'); }
         function hideModal(id) { document.getElementById(id).classList.remove('show'); }
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>"']/g, ch => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;',
+            }[ch]));
+        }
         function showToast(msg, type = '') {
             const t = document.getElementById('toast');
             t.textContent = msg;
@@ -458,6 +467,7 @@
         let dashboardData = {};
         let workbenchData = [];
         const selectedWorkbenchTabs = new Set();
+        const deletingWorkbenchIds = new Set();
 
         function tabKey(browserId, tabId) {
             return `${browserId}:${tabId}`;
@@ -661,28 +671,47 @@
                 return;
             }
             empty.style.display = 'none';
-            list.innerHTML = workbenchData.map(w => `
+            list.innerHTML = workbenchData.map(w => {
+                const isDeleting = deletingWorkbenchIds.has(w.id);
+                const name = w.name || 'Workbench';
+                return `
             <tr>
                 <td><strong>${w.id}</strong></td>
-                <td>${w.name || '<em>unnamed</em>'}</td>
+                <td>${name ? escapeHtml(name) : '<em>unnamed</em>'}</td>
                 <td>${w.tab_count || 0}</td>
                 <td>${w.active_tab_count || 0}</td>
                 <td>
                     <a class="view-btn" href="${w.url}" target="_blank">Open</a>
-                    <button class="btn btn-danger" onclick="deleteWorkbench(${w.id})">Delete</button>
+                    <button class="btn btn-danger" onclick="deleteWorkbench(${w.id})" ${isDeleting ? 'disabled' : ''}>${isDeleting ? 'Deleting…' : 'Delete'}</button>
                 </td>
             </tr>
-        `).join('');
+        `;
+            }).join('');
         }
 
         async function deleteWorkbench(id) {
-            if (!confirm(`Delete workbench ${id}?`)) return;
+            const workbench = workbenchData.find(w => w.id === id);
+            const name = workbench?.name || `Workbench ${id}`;
+            const tabs = workbench?.tabs || [];
+            const tabRefs = tabs.map(t => `${t.browser_id}/${t.tab_id}`).join(', ');
+            const tabCount = workbench?.tab_count ?? tabs.length;
+            const detail = tabRefs ? `\n\nTabs: ${tabRefs}` : '';
+            if (!confirm(`Delete "${name}"?\n\nThis releases ${tabCount} tab(s) so they can be assigned to another workbench.${detail}`)) return;
+            if (deletingWorkbenchIds.has(id)) return;
+            deletingWorkbenchIds.add(id);
+            renderWorkbenches();
+            let deleted = false;
             try {
-                await api('DELETE', `/api/admin/workbenches/${id}`);
-                showToast('Workbench deleted', 'success');
-                refreshData();
+                const result = await api('DELETE', `/api/admin/workbenches/${id}`);
+                tabs.forEach(t => selectedWorkbenchTabs.delete(tabKey(t.browser_id, t.tab_id)));
+                deleted = true;
+                showToast(`Workbench deleted (${result.released_tabs ?? tabCount} tabs released)`, 'success');
+                await refreshData();
             } catch (e) {
                 showToast(e.message, 'error');
+            } finally {
+                deletingWorkbenchIds.delete(id);
+                if (!deleted) renderWorkbenches();
             }
         }
 

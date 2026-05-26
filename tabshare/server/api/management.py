@@ -492,6 +492,7 @@ async def delete_workbench(workbench_id: int):
     wb, rows = await _get_workbench_row(workbench_id)
     if not wb:
         raise HTTPException(status_code=404, detail=f"Workbench {workbench_id} not found")
+    workbench_name = wb.name or f"Workbench {workbench_id}"
 
     async with async_session() as session:
         await session.execute(delete(WorkbenchTabModel).where(WorkbenchTabModel.workbench_id == workbench_id))
@@ -503,7 +504,15 @@ async def delete_workbench(workbench_id: int):
         if browser:
             browser.clear_tab_workbench(row.tab_id, workbench_id)
 
-    return {"success": True, "message": f"Workbench {workbench_id} deleted"}
+    from server.api.ws import close_workbench_clients
+    await close_workbench_clients(workbench_id, f"工作台 {workbench_name} 已删除")
+
+    return {
+        "success": True,
+        "message": f"Workbench {workbench_id} deleted",
+        "workbench_id": workbench_id,
+        "released_tabs": len(rows),
+    }
 
 
 @router.get("/viewers")

@@ -77,6 +77,8 @@
     let statusFadeTimer = null;
     let pendingControlSwitch = null;
     let switchInProgress = false;
+    let workbenchDeleted = false;
+    let workbenchDeleteRedirectTimer = null;
 
     function setStatus(text, type) {
         statusEl.textContent = text;
@@ -226,7 +228,21 @@
             ws.onmessage = (ev) => {
                 try {
                     const msg = JSON.parse(ev.data);
-                    if (msg.type === 'switch_tab_done') {
+                    if (msg.type === 'workbench_deleted') {
+                        workbenchDeleted = true;
+                        if (pendingControlSwitch) {
+                            pendingControlSwitch.reject(new Error(msg.message || 'Workbench deleted'));
+                            pendingControlSwitch = null;
+                        }
+                        hideNavOverlay();
+                        showNotice(msg.message || '工作台已删除');
+                        setStatus('Workbench deleted', 'error');
+                        if (!workbenchDeleteRedirectTimer) {
+                            workbenchDeleteRedirectTimer = setTimeout(() => {
+                                location.href = '/admin';
+                            }, 1400);
+                        }
+                    } else if (msg.type === 'switch_tab_done') {
                         if (pendingControlSwitch) {
                             pendingControlSwitch.resolve(msg);
                             pendingControlSwitch = null;
@@ -291,9 +307,20 @@
                 } catch (e) { }
             };
 
-            ws.onclose = () => {
+            ws.onclose = (ev) => {
                 console.log('WebSocket closed');
                 settle(false);
+                if (workbenchDeleted || (isWorkbench && ev.code === 4003)) {
+                    workbenchDeleted = true;
+                    setStatus('Workbench unavailable', 'error');
+                    if (!workbenchDeleteRedirectTimer) {
+                        showNotice('工作台不存在或已删除');
+                        workbenchDeleteRedirectTimer = setTimeout(() => {
+                            location.href = '/admin';
+                        }, 1400);
+                    }
+                    return;
+                }
                 setTimeout(() => connectWS({ connectStream }), 2000);
             };
 

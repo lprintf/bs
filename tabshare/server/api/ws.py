@@ -12,6 +12,29 @@ from server.services.browser_manager import browser_manager
 from server.services.database import async_session, WorkbenchTabModel
 
 router = APIRouter()
+_workbench_clients: dict[int, set[WebSocket]] = {}
+_workbench_clients_lock = asyncio.Lock()
+
+
+async def close_workbench_clients(workbench_id: int, message: str = "Workbench deleted"):
+    """Notify and close all open control sockets for a deleted workbench."""
+    async with _workbench_clients_lock:
+        clients = list(_workbench_clients.pop(workbench_id, set()))
+
+    payload = json.dumps({
+        "type": "workbench_deleted",
+        "workbench_id": workbench_id,
+        "message": message,
+    })
+    for websocket in clients:
+        try:
+            await websocket.send_text(payload)
+        except Exception:
+            pass
+        try:
+            await websocket.close(code=4003, reason="Workbench deleted")
+        except Exception:
+            pass
 
 
 @router.websocket("/ws/tab/{browser_id}/{tab_id}")
@@ -46,8 +69,18 @@ async def ws_workbench_input(websocket: WebSocket, workbench_id: int):
         return
 
     await websocket.accept()
-    browser_manager.add_viewer(browser_id, tab_id, websocket)
-    await _input_loop(websocket, tab, allow_switch=allowed_tabs)
+    async with _workbench_clients_lock:
+        _workbench_clients.setdefault(workbench_id, set()).add(websocket)
+    try:
+        browser_manager.add_viewer(browser_id, tab_id, websocket)
+        await _input_loop(websocket, tab, allow_switch=allowed_tabs, workbench_id=workbench_id)
+    finally:
+        async with _workbench_clients_lock:
+            clients = _workbench_clients.get(workbench_id)
+            if clients is not None:
+                clients.discard(websocket)
+                if not clients:
+                    _workbench_clients.pop(workbench_id, None)
 
 
 async def _workbench_allowed_tabs(workbench_id: int) -> set[tuple[int, int]]:
@@ -58,7 +91,12 @@ async def _workbench_allowed_tabs(workbench_id: int) -> set[tuple[int, int]]:
         return {(row.browser_id, row.tab_id) for row in result.scalars().all()}
 
 
-async def _input_loop(websocket: WebSocket, initial_tab, allow_switch: set[tuple[int, int]] | None = None):
+async def _input_loop(
+    websocket: WebSocket,
+    initial_tab,
+    allow_switch: set[tuple[int, int]] | None = None,
+    workbench_id: int | None = None,
+):
     tab = initial_tab
 
     try:
@@ -79,6 +117,16 @@ async def _input_loop(websocket: WebSocket, initial_tab, allow_switch: set[tuple
                             "message": "Switching is not supported on this socket",
                         }))
                         continue
+                    if workbench_id is not None:
+                        allow_switch = await _workbench_allowed_tabs(workbench_id)
+                        if not allow_switch:
+                            await websocket.send_text(json.dumps({
+                                "type": "workbench_deleted",
+                                "workbench_id": workbench_id,
+                                "message": "工作台已删除",
+                            }))
+                            await websocket.close(code=4003, reason="Workbench deleted")
+                            return
                     new_browser_id = int(msg.get("browser_id"))
                     new_tab_id = int(msg.get("tab_id"))
                     if (new_browser_id, new_tab_id) not in allow_switch:
