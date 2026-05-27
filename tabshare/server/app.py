@@ -1,6 +1,6 @@
 from pathlib import Path
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, FileResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from server.services.browser_manager import browser_manager
 from server.services.database import init_db
@@ -34,8 +34,15 @@ app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 async def root():
     return RedirectResponse("/admin")
 
+@app.get("/favicon.ico")
+async def favicon():
+    return Response(status_code=204)
+
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_page():
+    admin_spa = static_dir / "admin-spa" / "index.html"
+    if admin_spa.exists():
+        return FileResponse(admin_spa)
     admin_html = static_dir / "admin.html"
     if admin_html.exists():
         return FileResponse(admin_html)
