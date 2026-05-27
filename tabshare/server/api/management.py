@@ -57,6 +57,10 @@ class WorkbenchRequest(BaseModel):
     tabs: list[WorkbenchTabRef]
 
 
+class WorkbenchTabsRequest(BaseModel):
+    tabs: list[WorkbenchTabRef]
+
+
 def _workbench_url(workbench_id: int) -> str:
     return f"/workbench/{workbench_id}"
 
@@ -122,6 +126,77 @@ async def _serialize_workbench(wb: WorkbenchModel, rows: list[WorkbenchTabModel]
         "url": _workbench_url(wb.id),
     })
     return data
+
+
+async def _validate_workbench_tab_refs(refs: list[WorkbenchTabRef]):
+    """Return unique active admin-created persistent tabs and their lock hostnames."""
+    if not refs:
+        raise HTTPException(status_code=400, detail="Select at least one tab")
+
+    seen: set[tuple[int, int]] = set()
+    selected = []
+
+    for ref in refs:
+        key = (ref.browser_id, ref.tab_id)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        browser = browser_manager.get_browser(ref.browser_id)
+        if not browser:
+            raise HTTPException(status_code=404, detail=f"Browser {ref.browser_id} not found")
+        tab = browser.tabs.get(ref.tab_id)
+        if not tab or tab.page.is_closed():
+            raise HTTPException(status_code=404, detail=f"Tab {ref.tab_id} not found")
+        if tab.workbench_id:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Tab {ref.browser_id}/{ref.tab_id} already belongs to workbench {tab.workbench_name or tab.workbench_id}",
+            )
+        if not tab.persistent or tab.created_by != "admin":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Tab {ref.browser_id}/{ref.tab_id} is not an admin-created persistent tab",
+            )
+        hostname = _url_hostname(tab.page.url)
+        if not hostname:
+            raise HTTPException(status_code=400, detail=f"Tab {ref.browser_id}/{ref.tab_id} has no HTTP(S) domain to lock")
+        selected.append((browser, tab, hostname))
+
+    if not selected:
+        raise HTTPException(status_code=400, detail="Select at least one tab")
+    return selected
+
+
+async def _ensure_tabs_can_join_workbench(session, selected):
+    for _browser, tab, _hostname in selected:
+        tab_result = await session.execute(
+            select(TabModel).where(
+                TabModel.browser_id == tab.browser_id,
+                TabModel.tab_id == tab.tab_id,
+                TabModel.created_by == "admin",
+                TabModel.enabled == True,
+            )
+        )
+        if not tab_result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=400,
+                detail=f"Tab {tab.browser_id}/{tab.tab_id} is not an admin-created persistent tab",
+            )
+        existing = await session.execute(
+            select(WorkbenchTabModel).where(
+                WorkbenchTabModel.browser_id == tab.browser_id,
+                WorkbenchTabModel.tab_id == tab.tab_id,
+            )
+        )
+        row = existing.scalar_one_or_none()
+        if row:
+            wb = await session.get(WorkbenchModel, row.workbench_id)
+            label = wb.name if wb else row.workbench_id
+            raise HTTPException(
+                status_code=409,
+                detail=f"Tab {tab.browser_id}/{tab.tab_id} already belongs to workbench {label}",
+            )
 
 
 # ── Dashboard ──
@@ -368,73 +443,11 @@ async def go_forward(browser_id: int, tab_id: int):
 @router.post("/workbenches")
 async def create_workbench(req: WorkbenchRequest):
     """Persist a fixed tab group for the workbench page and lock tab domains."""
-    if not req.tabs:
-        raise HTTPException(status_code=400, detail="Select at least one tab")
-
-    seen: set[tuple[int, int]] = set()
-    selected = []
-
-    for ref in req.tabs:
-        key = (ref.browser_id, ref.tab_id)
-        if key in seen:
-            continue
-        seen.add(key)
-
-        browser = browser_manager.get_browser(ref.browser_id)
-        if not browser:
-            raise HTTPException(status_code=404, detail=f"Browser {ref.browser_id} not found")
-        tab = browser.tabs.get(ref.tab_id)
-        if not tab or tab.page.is_closed():
-            raise HTTPException(status_code=404, detail=f"Tab {ref.tab_id} not found")
-        if tab.workbench_id:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Tab {ref.browser_id}/{ref.tab_id} already belongs to workbench {tab.workbench_name or tab.workbench_id}",
-            )
-        if not tab.persistent or tab.created_by != "admin":
-            raise HTTPException(
-                status_code=400,
-                detail=f"Tab {ref.browser_id}/{ref.tab_id} is not an admin-created persistent tab",
-            )
-        hostname = _url_hostname(tab.page.url)
-        if not hostname:
-            raise HTTPException(status_code=400, detail=f"Tab {ref.browser_id}/{ref.tab_id} has no HTTP(S) domain to lock")
-        selected.append((browser, tab, hostname))
-
-    if not selected:
-        raise HTTPException(status_code=400, detail="Select at least one tab")
-
+    selected = await _validate_workbench_tab_refs(req.tabs)
     name = req.name.strip() or "Workbench"
 
     async with async_session() as session:
-        for _browser, tab, _hostname in selected:
-            tab_result = await session.execute(
-                select(TabModel).where(
-                    TabModel.browser_id == tab.browser_id,
-                    TabModel.tab_id == tab.tab_id,
-                    TabModel.created_by == "admin",
-                    TabModel.enabled == True,
-                )
-            )
-            if not tab_result.scalar_one_or_none():
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Tab {tab.browser_id}/{tab.tab_id} is not an admin-created persistent tab",
-                )
-            existing = await session.execute(
-                select(WorkbenchTabModel).where(
-                    WorkbenchTabModel.browser_id == tab.browser_id,
-                    WorkbenchTabModel.tab_id == tab.tab_id,
-                )
-            )
-            row = existing.scalar_one_or_none()
-            if row:
-                wb = await session.get(WorkbenchModel, row.workbench_id)
-                label = wb.name if wb else row.workbench_id
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Tab {tab.browser_id}/{tab.tab_id} already belongs to workbench {label}",
-                )
+        await _ensure_tabs_can_join_workbench(session, selected)
 
         wb = WorkbenchModel(name=name)
         session.add(wb)
@@ -457,6 +470,107 @@ async def create_workbench(req: WorkbenchRequest):
 
     wb_row, tab_rows = await _get_workbench_row(wb.id)
     return await _serialize_workbench(wb_row, tab_rows, apply_runtime=True)
+
+
+@router.post("/workbenches/{workbench_id}/tabs")
+async def add_workbench_tabs(workbench_id: int, req: WorkbenchTabsRequest):
+    """Append admin-created persistent tabs to an existing workbench."""
+    wb, _rows = await _get_workbench_row(workbench_id)
+    if not wb:
+        raise HTTPException(status_code=404, detail=f"Workbench {workbench_id} not found")
+
+    selected = await _validate_workbench_tab_refs(req.tabs)
+
+    async with async_session() as session:
+        wb_row = await session.get(WorkbenchModel, workbench_id)
+        if not wb_row:
+            raise HTTPException(status_code=404, detail=f"Workbench {workbench_id} not found")
+
+        await _ensure_tabs_can_join_workbench(session, selected)
+        for _browser, tab, hostname in selected:
+            session.add(WorkbenchTabModel(
+                workbench_id=workbench_id,
+                browser_id=tab.browser_id,
+                tab_id=tab.tab_id,
+                allowed_hostname=hostname,
+            ))
+        try:
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            raise HTTPException(status_code=409, detail="One or more tabs already belong to another workbench")
+
+    for browser, tab, hostname in selected:
+        await browser.assign_tab_to_workbench(tab.tab_id, wb.id, wb.name, hostname)
+
+    wb_row, tab_rows = await _get_workbench_row(workbench_id)
+    data = await _serialize_workbench(wb_row, tab_rows, apply_runtime=True)
+
+    from server.api.ws import notify_workbench_clients
+    await notify_workbench_clients(workbench_id, {
+        "type": "workbench_updated",
+        "workbench_id": workbench_id,
+        "message": f"工作台 {wb.name or workbench_id} 已添加 {len(selected)} 个页面",
+    })
+
+    return data
+
+
+@router.post("/workbenches/{workbench_id}/tabs/remove")
+async def remove_workbench_tabs(workbench_id: int, req: WorkbenchTabsRequest):
+    """Remove tabs from an existing workbench and release their domain locks."""
+    wb, rows = await _get_workbench_row(workbench_id)
+    if not wb:
+        raise HTTPException(status_code=404, detail=f"Workbench {workbench_id} not found")
+    if not req.tabs:
+        raise HTTPException(status_code=400, detail="Select at least one tab")
+
+    requested: set[tuple[int, int]] = {
+        (ref.browser_id, ref.tab_id)
+        for ref in req.tabs
+    }
+    rows_by_ref = {
+        (row.browser_id, row.tab_id): row
+        for row in rows
+    }
+    missing = [ref for ref in requested if ref not in rows_by_ref]
+    if missing:
+        label = ", ".join(f"{browser_id}/{tab_id}" for browser_id, tab_id in sorted(missing))
+        raise HTTPException(status_code=404, detail=f"Tabs are not in this workbench: {label}")
+    if len(rows) - len(requested) < 1:
+        raise HTTPException(status_code=400, detail="Cannot remove the last tab; delete the workbench instead")
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(WorkbenchTabModel).where(WorkbenchTabModel.workbench_id == workbench_id)
+        )
+        db_rows = result.scalars().all()
+        for row in db_rows:
+            if (row.browser_id, row.tab_id) in requested:
+                await session.delete(row)
+        await session.commit()
+
+    removed_rows = [rows_by_ref[ref] for ref in requested]
+    for row in removed_rows:
+        browser = browser_manager.get_browser(row.browser_id)
+        if browser:
+            browser.clear_tab_workbench(row.tab_id, workbench_id)
+
+    wb_row, tab_rows = await _get_workbench_row(workbench_id)
+    data = await _serialize_workbench(wb_row, tab_rows, apply_runtime=True)
+
+    from server.api.ws import notify_workbench_clients
+    await notify_workbench_clients(workbench_id, {
+        "type": "workbench_updated",
+        "workbench_id": workbench_id,
+        "removed_tabs": [
+            {"browser_id": row.browser_id, "tab_id": row.tab_id}
+            for row in removed_rows
+        ],
+        "message": f"工作台 {wb.name or workbench_id} 已移除 {len(removed_rows)} 个页面",
+    })
+
+    return data
 
 
 @router.get("/workbenches")

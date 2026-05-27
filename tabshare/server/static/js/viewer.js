@@ -225,7 +225,7 @@
                 settle(true);
             };
 
-            ws.onmessage = (ev) => {
+            ws.onmessage = async (ev) => {
                 try {
                     const msg = JSON.parse(ev.data);
                     if (msg.type === 'workbench_deleted') {
@@ -241,6 +241,22 @@
                             workbenchDeleteRedirectTimer = setTimeout(() => {
                                 location.href = '/admin';
                             }, 1400);
+                        }
+                    } else if (msg.type === 'workbench_updated') {
+                        if (isWorkbench) {
+                            const currentKey = activeBrowserId !== null ? `${activeBrowserId}:${activeTabId}` : '';
+                            if (currentKey) {
+                                const params = new URLSearchParams(location.search);
+                                params.set('active', currentKey);
+                                history.replaceState(null, '', `/workbench/${initialWorkbenchId}?${params.toString()}`);
+                            }
+                            await loadWorkbenchTabs();
+                            renderTabBar();
+                            const nextKey = activeBrowserId !== null ? `${activeBrowserId}:${activeTabId}` : '';
+                            showNotice(msg.message || '工作台已更新');
+                            if (currentKey && nextKey && currentKey !== nextKey) {
+                                switchTab(activeBrowserId, activeTabId);
+                            }
                         }
                     } else if (msg.type === 'switch_tab_done') {
                         if (pendingControlSwitch) {

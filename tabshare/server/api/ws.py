@@ -37,6 +37,21 @@ async def close_workbench_clients(workbench_id: int, message: str = "Workbench d
             pass
 
 
+async def notify_workbench_clients(workbench_id: int, event: dict):
+    """Notify all open control sockets for a workbench without closing them."""
+    async with _workbench_clients_lock:
+        clients = list(_workbench_clients.get(workbench_id, set()))
+
+    if not clients:
+        return
+    payload = json.dumps(event)
+    for websocket in clients:
+        try:
+            await websocket.send_text(payload)
+        except Exception:
+            pass
+
+
 @router.websocket("/ws/tab/{browser_id}/{tab_id}")
 async def ws_input(websocket: WebSocket, browser_id: int, tab_id: int):
     tab = browser_manager.find_tab(browser_id, tab_id)

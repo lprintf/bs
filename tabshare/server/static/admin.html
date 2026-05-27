@@ -365,6 +365,52 @@
             </div>
         </div>
 
+        <!-- Add Workbench Tabs Modal -->
+        <div id="addWorkbenchTabsModal" class="modal">
+            <div class="modal-content">
+                <div class="modal-title">Add Tabs to Workbench</div>
+                <input type="hidden" id="addWorkbenchTabsId">
+                <div class="form-group">
+                    <label>Workbench</label>
+                    <div id="addWorkbenchTabsName" class="proxy-tag none">-</div>
+                </div>
+                <div class="form-group">
+                    <label>Selected Tabs</label>
+                    <div id="addWorkbenchTabsSummary" class="proxy-tag none">0 selected</div>
+                </div>
+                <div style="font-size:0.85rem;color:#666;margin-bottom:1rem;">
+                    Only unassigned admin-created persistent tabs can be added. Added tabs are domain-locked immediately.
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="hideAddWorkbenchTabsModal()">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="confirmAddWorkbenchTabsBtn">Add Tabs</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Remove Workbench Tabs Modal -->
+        <div id="removeWorkbenchTabsModal" class="modal">
+            <div class="modal-content">
+                <div class="modal-title">Remove Tabs from Workbench</div>
+                <input type="hidden" id="removeWorkbenchTabsId">
+                <div class="form-group">
+                    <label>Workbench</label>
+                    <div id="removeWorkbenchTabsName" class="proxy-tag none">-</div>
+                </div>
+                <div class="form-group">
+                    <label>Tabs</label>
+                    <div id="removeWorkbenchTabsList"></div>
+                </div>
+                <div id="removeWorkbenchTabsSummary" style="font-size:0.85rem;color:#666;margin-bottom:1rem;">
+                    0 selected
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="hideRemoveWorkbenchTabsModal()">Cancel</button>
+                    <button type="button" class="btn btn-danger" id="confirmRemoveWorkbenchTabsBtn" disabled>Remove Tabs</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Delete Workbench Modal -->
         <div id="deleteWorkbenchModal" class="modal">
             <div class="modal-content">
@@ -491,15 +537,44 @@
         let workbenchData = [];
         const selectedWorkbenchTabs = new Set();
         const deletingWorkbenchIds = new Set();
+        const addingWorkbenchIds = new Set();
+        const removingWorkbenchIds = new Set();
+        const selectedRemoveWorkbenchTabs = new Set();
+        let pendingAddWorkbenchId = null;
+        let pendingRemoveWorkbenchId = null;
         let pendingDeleteWorkbenchId = null;
 
         document.addEventListener('click', (ev) => {
-            const btn = ev.target.closest('[data-action="delete-workbench"]');
-            if (!btn) return;
-            ev.preventDefault();
-            const id = Number(btn.dataset.workbenchId);
-            if (Number.isInteger(id)) showDeleteWorkbenchModal(id);
+            const addBtn = ev.target.closest('[data-action="add-workbench-tabs"]');
+            if (addBtn) {
+                ev.preventDefault();
+                const id = Number(addBtn.dataset.workbenchId);
+                if (Number.isInteger(id)) showAddWorkbenchTabsModal(id);
+                return;
+            }
+
+            const removeBtn = ev.target.closest('[data-action="remove-workbench-tabs"]');
+            if (removeBtn) {
+                ev.preventDefault();
+                const id = Number(removeBtn.dataset.workbenchId);
+                if (Number.isInteger(id)) showRemoveWorkbenchTabsModal(id);
+                return;
+            }
+
+            const deleteBtn = ev.target.closest('[data-action="delete-workbench"]');
+            if (deleteBtn) {
+                ev.preventDefault();
+                const id = Number(deleteBtn.dataset.workbenchId);
+                if (Number.isInteger(id)) showDeleteWorkbenchModal(id);
+            }
         });
+        document.addEventListener('change', (ev) => {
+            const box = ev.target.closest('.remove-workbench-tab-select');
+            if (!box) return;
+            toggleRemoveWorkbenchTab(box.dataset.key, box.checked);
+        });
+        document.getElementById('confirmAddWorkbenchTabsBtn').addEventListener('click', confirmAddWorkbenchTabs);
+        document.getElementById('confirmRemoveWorkbenchTabsBtn').addEventListener('click', confirmRemoveWorkbenchTabs);
         document.getElementById('confirmDeleteWorkbenchBtn').addEventListener('click', confirmDeleteWorkbench);
 
         function tabKey(browserId, tabId) {
@@ -706,6 +781,9 @@
             empty.style.display = 'none';
             list.innerHTML = workbenchData.map(w => {
                 const isDeleting = deletingWorkbenchIds.has(w.id);
+                const isAdding = addingWorkbenchIds.has(w.id);
+                const isRemoving = removingWorkbenchIds.has(w.id);
+                const canRemoveTabs = (w.tab_count || 0) > 1;
                 const name = w.name || 'Workbench';
                 return `
             <tr>
@@ -715,11 +793,163 @@
                 <td>${w.active_tab_count || 0}</td>
                 <td>
                     <a class="view-btn" href="${w.url}" target="_blank">Open</a>
+                    <button type="button" class="btn btn-primary" data-action="add-workbench-tabs" data-workbench-id="${w.id}" ${isAdding ? 'disabled' : ''}>${isAdding ? 'Adding…' : 'Add Tabs'}</button>
+                    <button type="button" class="btn btn-warning" data-action="remove-workbench-tabs" data-workbench-id="${w.id}" ${isRemoving || !canRemoveTabs ? 'disabled' : ''} title="${canRemoveTabs ? '' : 'Delete the workbench to remove its last tab'}">${isRemoving ? 'Removing…' : 'Remove Tabs'}</button>
                     <button type="button" class="btn btn-danger" data-action="delete-workbench" data-workbench-id="${w.id}" ${isDeleting ? 'disabled' : ''}>${isDeleting ? 'Deleting…' : 'Delete'}</button>
                 </td>
             </tr>
         `;
             }).join('');
+        }
+
+        function showAddWorkbenchTabsModal(id) {
+            const workbench = workbenchData.find(w => w.id === id);
+            if (!workbench) {
+                showToast(`Workbench ${id} not found`, 'error');
+                return;
+            }
+            const tabs = [...selectedWorkbenchTabs].map(parseTabKey);
+            if (!tabs.length) {
+                showToast('Select one or more unassigned tabs first', 'error');
+                return;
+            }
+            const tabRefs = tabs.map(t => `${t.browser_id}/${t.tab_id}`).join(', ');
+            pendingAddWorkbenchId = id;
+            document.getElementById('addWorkbenchTabsId').value = String(id);
+            document.getElementById('addWorkbenchTabsName').textContent = `${workbench.name || 'Workbench'} (#${id})`;
+            document.getElementById('addWorkbenchTabsSummary').textContent = tabRefs;
+            const btn = document.getElementById('confirmAddWorkbenchTabsBtn');
+            btn.disabled = addingWorkbenchIds.has(id);
+            btn.textContent = btn.disabled ? 'Adding…' : 'Add Tabs';
+            showModal('addWorkbenchTabsModal');
+        }
+
+        function hideAddWorkbenchTabsModal() {
+            pendingAddWorkbenchId = null;
+            hideModal('addWorkbenchTabsModal');
+        }
+
+        async function confirmAddWorkbenchTabs() {
+            const id = pendingAddWorkbenchId ?? Number(document.getElementById('addWorkbenchTabsId').value);
+            if (!Number.isInteger(id)) return;
+            if (addingWorkbenchIds.has(id)) return;
+            const tabs = [...selectedWorkbenchTabs].map(parseTabKey);
+            if (!tabs.length) {
+                showToast('Select one or more unassigned tabs first', 'error');
+                return;
+            }
+
+            const btn = document.getElementById('confirmAddWorkbenchTabsBtn');
+            addingWorkbenchIds.add(id);
+            btn.disabled = true;
+            btn.textContent = 'Adding…';
+            renderWorkbenches();
+            let added = false;
+            try {
+                const result = await api('POST', `/api/admin/workbenches/${id}/tabs`, { tabs });
+                tabs.forEach(t => selectedWorkbenchTabs.delete(tabKey(t.browser_id, t.tab_id)));
+                added = true;
+                hideAddWorkbenchTabsModal();
+                showToast(`Added ${tabs.length} tab(s) to ${result.name || ('workbench ' + id)}`, 'success');
+                await refreshData();
+            } catch (e) {
+                showToast(e.message, 'error');
+            } finally {
+                addingWorkbenchIds.delete(id);
+                btn.disabled = false;
+                btn.textContent = 'Add Tabs';
+                if (!added) renderWorkbenches();
+            }
+        }
+
+        function showRemoveWorkbenchTabsModal(id) {
+            const workbench = workbenchData.find(w => w.id === id);
+            if (!workbench) {
+                showToast(`Workbench ${id} not found`, 'error');
+                return;
+            }
+            const tabs = workbench.tabs || [];
+            if (tabs.length <= 1) {
+                showToast('Cannot remove the last tab; delete the workbench instead', 'error');
+                return;
+            }
+            pendingRemoveWorkbenchId = id;
+            selectedRemoveWorkbenchTabs.clear();
+            document.getElementById('removeWorkbenchTabsId').value = String(id);
+            document.getElementById('removeWorkbenchTabsName').textContent = `${workbench.name || 'Workbench'} (#${id})`;
+            document.getElementById('removeWorkbenchTabsList').innerHTML = tabs.map(t => {
+                const key = tabKey(t.browser_id, t.tab_id);
+                const url = t.url || t.allowed_hostname || 'missing';
+                const shortUrl = url.length > 70 ? url.substring(0, 70) + '…' : url;
+                const status = t.available === false ? '<span class="proxy-tag none">missing</span>' : '';
+                return `
+                    <label style="display:flex;gap:0.5rem;align-items:center;margin:0.35rem 0;">
+                        <input type="checkbox" class="tab-select remove-workbench-tab-select" data-key="${key}">
+                        <strong>${t.browser_id}/${t.tab_id}</strong>
+                        <span title="${escapeHtml(url)}">${escapeHtml(shortUrl)}</span>
+                        ${status}
+                    </label>
+                `;
+            }).join('');
+            updateRemoveWorkbenchControls();
+            showModal('removeWorkbenchTabsModal');
+        }
+
+        function hideRemoveWorkbenchTabsModal() {
+            pendingRemoveWorkbenchId = null;
+            selectedRemoveWorkbenchTabs.clear();
+            hideModal('removeWorkbenchTabsModal');
+        }
+
+        function toggleRemoveWorkbenchTab(key, checked) {
+            if (checked) {
+                selectedRemoveWorkbenchTabs.add(key);
+            } else {
+                selectedRemoveWorkbenchTabs.delete(key);
+            }
+            updateRemoveWorkbenchControls();
+        }
+
+        function updateRemoveWorkbenchControls() {
+            const id = pendingRemoveWorkbenchId ?? Number(document.getElementById('removeWorkbenchTabsId').value);
+            const workbench = workbenchData.find(w => w.id === id);
+            const total = workbench?.tabs?.length || 0;
+            const count = selectedRemoveWorkbenchTabs.size;
+            const removesAll = total > 0 && count >= total;
+            document.getElementById('removeWorkbenchTabsSummary').textContent = removesAll
+                ? 'Cannot remove all tabs. Delete the workbench instead.'
+                : `${count} selected`;
+            const btn = document.getElementById('confirmRemoveWorkbenchTabsBtn');
+            btn.disabled = count === 0 || removesAll || removingWorkbenchIds.has(id);
+        }
+
+        async function confirmRemoveWorkbenchTabs() {
+            const id = pendingRemoveWorkbenchId ?? Number(document.getElementById('removeWorkbenchTabsId').value);
+            if (!Number.isInteger(id)) return;
+            if (removingWorkbenchIds.has(id)) return;
+            const tabs = [...selectedRemoveWorkbenchTabs].map(parseTabKey);
+            if (!tabs.length) return;
+
+            const btn = document.getElementById('confirmRemoveWorkbenchTabsBtn');
+            removingWorkbenchIds.add(id);
+            btn.disabled = true;
+            btn.textContent = 'Removing…';
+            renderWorkbenches();
+            let removed = false;
+            try {
+                const result = await api('POST', `/api/admin/workbenches/${id}/tabs/remove`, { tabs });
+                removed = true;
+                hideRemoveWorkbenchTabsModal();
+                showToast(`Removed ${tabs.length} tab(s) from ${result.name || ('workbench ' + id)}`, 'success');
+                await refreshData();
+            } catch (e) {
+                showToast(e.message, 'error');
+            } finally {
+                removingWorkbenchIds.delete(id);
+                btn.disabled = false;
+                btn.textContent = 'Remove Tabs';
+                if (!removed) renderWorkbenches();
+            }
         }
 
         function showDeleteWorkbenchModal(id) {
