@@ -365,6 +365,29 @@
             </div>
         </div>
 
+        <!-- Delete Workbench Modal -->
+        <div id="deleteWorkbenchModal" class="modal">
+            <div class="modal-content">
+                <div class="modal-title">Delete Workbench</div>
+                <input type="hidden" id="deleteWorkbenchId">
+                <div class="form-group">
+                    <label>Workbench</label>
+                    <div id="deleteWorkbenchName" class="proxy-tag none">-</div>
+                </div>
+                <div class="form-group">
+                    <label>Tabs to release</label>
+                    <div id="deleteWorkbenchTabs" class="proxy-tag none">-</div>
+                </div>
+                <div style="font-size:0.85rem;color:#666;margin-bottom:1rem;">
+                    Deleting a workbench only releases its tabs. Browser tabs remain open and can be assigned again.
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="hideDeleteWorkbenchModal()">Cancel</button>
+                    <button type="button" class="btn btn-danger" id="confirmDeleteWorkbenchBtn">Delete</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Navigate Modal -->
         <div id="navigateModal" class="modal">
             <div class="modal-content">
@@ -468,6 +491,16 @@
         let workbenchData = [];
         const selectedWorkbenchTabs = new Set();
         const deletingWorkbenchIds = new Set();
+        let pendingDeleteWorkbenchId = null;
+
+        document.addEventListener('click', (ev) => {
+            const btn = ev.target.closest('[data-action="delete-workbench"]');
+            if (!btn) return;
+            ev.preventDefault();
+            const id = Number(btn.dataset.workbenchId);
+            if (Number.isInteger(id)) showDeleteWorkbenchModal(id);
+        });
+        document.getElementById('confirmDeleteWorkbenchBtn').addEventListener('click', confirmDeleteWorkbench);
 
         function tabKey(browserId, tabId) {
             return `${browserId}:${tabId}`;
@@ -682,35 +715,64 @@
                 <td>${w.active_tab_count || 0}</td>
                 <td>
                     <a class="view-btn" href="${w.url}" target="_blank">Open</a>
-                    <button class="btn btn-danger" onclick="deleteWorkbench(${w.id})" ${isDeleting ? 'disabled' : ''}>${isDeleting ? 'Deleting…' : 'Delete'}</button>
+                    <button type="button" class="btn btn-danger" data-action="delete-workbench" data-workbench-id="${w.id}" ${isDeleting ? 'disabled' : ''}>${isDeleting ? 'Deleting…' : 'Delete'}</button>
                 </td>
             </tr>
         `;
             }).join('');
         }
 
-        async function deleteWorkbench(id) {
+        function showDeleteWorkbenchModal(id) {
             const workbench = workbenchData.find(w => w.id === id);
+            if (!workbench) {
+                showToast(`Workbench ${id} not found`, 'error');
+                return;
+            }
             const name = workbench?.name || `Workbench ${id}`;
             const tabs = workbench?.tabs || [];
             const tabRefs = tabs.map(t => `${t.browser_id}/${t.tab_id}`).join(', ');
             const tabCount = workbench?.tab_count ?? tabs.length;
-            const detail = tabRefs ? `\n\nTabs: ${tabRefs}` : '';
-            if (!confirm(`Delete "${name}"?\n\nThis releases ${tabCount} tab(s) so they can be assigned to another workbench.${detail}`)) return;
+            pendingDeleteWorkbenchId = id;
+            document.getElementById('deleteWorkbenchId').value = String(id);
+            document.getElementById('deleteWorkbenchName').textContent = `${name} (#${id})`;
+            document.getElementById('deleteWorkbenchTabs').textContent = tabRefs || `${tabCount} tab(s)`;
+            const btn = document.getElementById('confirmDeleteWorkbenchBtn');
+            btn.disabled = deletingWorkbenchIds.has(id);
+            btn.textContent = btn.disabled ? 'Deleting…' : 'Delete';
+            showModal('deleteWorkbenchModal');
+        }
+
+        function hideDeleteWorkbenchModal() {
+            pendingDeleteWorkbenchId = null;
+            hideModal('deleteWorkbenchModal');
+        }
+
+        async function confirmDeleteWorkbench() {
+            const id = pendingDeleteWorkbenchId ?? Number(document.getElementById('deleteWorkbenchId').value);
+            if (!Number.isInteger(id)) return;
             if (deletingWorkbenchIds.has(id)) return;
+            const btn = document.getElementById('confirmDeleteWorkbenchBtn');
             deletingWorkbenchIds.add(id);
+            btn.disabled = true;
+            btn.textContent = 'Deleting…';
             renderWorkbenches();
             let deleted = false;
             try {
+                const workbench = workbenchData.find(w => w.id === id);
+                const tabs = workbench?.tabs || [];
+                const tabCount = workbench?.tab_count ?? tabs.length;
                 const result = await api('DELETE', `/api/admin/workbenches/${id}`);
                 tabs.forEach(t => selectedWorkbenchTabs.delete(tabKey(t.browser_id, t.tab_id)));
                 deleted = true;
+                hideDeleteWorkbenchModal();
                 showToast(`Workbench deleted (${result.released_tabs ?? tabCount} tabs released)`, 'success');
                 await refreshData();
             } catch (e) {
                 showToast(e.message, 'error');
             } finally {
                 deletingWorkbenchIds.delete(id);
+                btn.disabled = false;
+                btn.textContent = 'Delete';
                 if (!deleted) renderWorkbenches();
             }
         }
