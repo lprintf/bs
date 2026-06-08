@@ -41,6 +41,9 @@ Thumbs.db
 # Deck shell output (auto-generated)
 .deck-shell/
 
+# Local git worktrees
+/worktree/
+
 # 网关相关,这版先不考虑身份认证
 安全合规
 demo
