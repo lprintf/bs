@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Activity,
-  Check,
+  ChevronDown,
+  ChevronRight,
   CirclePlus,
   Edit3,
   ExternalLink,
@@ -76,6 +76,12 @@ type Workbench = {
   id: number;
   name: string;
   created_at?: string;
+  active_browser_id?: number | null;
+  active_tab_id?: number | null;
+  active_room?: string | null;
+  recording_enabled?: boolean;
+  recording_room?: string | null;
+  recording_file?: string | null;
   tabs: TabInfo[];
   active_tabs: TabInfo[];
   tab_count: number;
@@ -197,6 +203,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [codec, setCodecState] = useState("h264");
   const [chromeVersions, setChromeVersions] = useState<string[]>([]);
+  const [recordingWorkbenchIds, setRecordingWorkbenchIds] = useState<Set<number>>(new Set());
 
   const [createBrowserOpen, setCreateBrowserOpen] = useState(false);
   const [createTabFor, setCreateTabFor] = useState<BrowserInfo | null>(null);
@@ -310,6 +317,24 @@ export default function App() {
       await api("PUT", "/api/codec", { codec: codecValue });
       setCodecState(codecValue);
     }, `Codec set to ${codecValue.toUpperCase()}`);
+  }
+
+  async function toggleWorkbenchRecording(workbench: Workbench) {
+    setRecordingWorkbenchIds((current) => new Set(current).add(workbench.id));
+    try {
+      const next = !workbench.recording_enabled;
+      await api("POST", `/api/admin/workbenches/${workbench.id}/recording`, { recording: next });
+      showToast(next ? "Workbench recording started" : "Workbench recording stopped", "success");
+      await refreshData();
+    } catch (err) {
+      showToast((err as Error).message, "error");
+    } finally {
+      setRecordingWorkbenchIds((current) => {
+        const next = new Set(current);
+        next.delete(workbench.id);
+        return next;
+      });
+    }
   }
 
   function toggleTabSelection(tab: TabInfo, checked: boolean) {
@@ -427,6 +452,16 @@ export default function App() {
     setRemoveTabKeys(new Set());
   }
 
+  function removeSingleWorkbenchTab(workbench: Workbench, tab: TabInfo) {
+    return runAction(
+      () =>
+        api("POST", `/api/admin/workbenches/${workbench.id}/tabs/remove`, {
+          tabs: [{ browser_id: tab.browser_id, tab_id: tab.tab_id }],
+        }),
+      "Tab released",
+    );
+  }
+
   const removeAllSelected = removeTabsWorkbench ? removeTabKeys.size >= removeTabsWorkbench.tabs.length : false;
 
   return (
@@ -443,7 +478,7 @@ export default function App() {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {["h264", "vp9", "av1"].map((item) => (
+            {["h264", "vp8", "vp9", "av1"].map((item) => (
               <Button
                 key={item}
                 variant={codec === item ? "default" : "outline"}
@@ -479,21 +514,34 @@ export default function App() {
               <StatCard label="Tabs" value={dashboard.total_tabs} tone="border-cyan-500" />
               <StatCard label="Viewers" value={dashboard.total_viewers} tone="border-amber-500" />
             </div>
-            <div className="mt-4 grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+            <div className="mt-4 grid gap-4">
               <BrowserTable
                 browsers={dashboard.browsers}
                 compact
+                workbenchByTab={workbenchByTab}
+                selected={selectedTabKeys}
+                onToggleTabSelection={toggleTabSelection}
                 onCreateTab={openCreateTab}
                 onEdit={openEditBrowser}
                 onLaunch={(id) => runAction(() => api("POST", `/api/admin/browsers/${id}/launch`), "Browser launching")}
                 onClose={(id) => runAction(() => api("POST", `/api/admin/browsers/${id}/close`), "Browser closed")}
                 onDelete={(id) => runAction(() => api("DELETE", `/api/admin/browsers/${id}`), "Browser deleted")}
+                onCloseTab={(tab) =>
+                  runAction(
+                    () => api("DELETE", `/api/admin/browsers/${tab.browser_id}/tabs/${tab.tab_id}`),
+                    "Tab closed",
+                  )
+                }
               />
               <WorkbenchTable
                 workbenches={workbenches}
                 selectedCount={selectedTabKeys.size}
+                onCreateWorkbench={() => setCreateWorkbenchOpen(true)}
                 onAddTabs={setAddTabsWorkbench}
                 onRemoveTabs={openRemoveTabs}
+                onRemoveTab={removeSingleWorkbenchTab}
+                onToggleRecording={toggleWorkbenchRecording}
+                recordingBusyIds={recordingWorkbenchIds}
                 onDelete={setDeleteWorkbench}
               />
             </div>
@@ -514,11 +562,20 @@ export default function App() {
               <CardContent>
                 <BrowserTable
                   browsers={dashboard.browsers}
+                  workbenchByTab={workbenchByTab}
+                  selected={selectedTabKeys}
+                  onToggleTabSelection={toggleTabSelection}
                   onCreateTab={openCreateTab}
                   onEdit={openEditBrowser}
                   onLaunch={(id) => runAction(() => api("POST", `/api/admin/browsers/${id}/launch`), "Browser launching")}
                   onClose={(id) => runAction(() => api("POST", `/api/admin/browsers/${id}/close`), "Browser closed")}
                   onDelete={(id) => runAction(() => api("DELETE", `/api/admin/browsers/${id}`), "Browser deleted")}
+                  onCloseTab={(tab) =>
+                    runAction(
+                      () => api("DELETE", `/api/admin/browsers/${tab.browser_id}/tabs/${tab.tab_id}`),
+                      "Tab closed",
+                    )
+                  }
                 />
               </CardContent>
             </Card>
@@ -530,7 +587,9 @@ export default function App() {
                 <CardHeader className="flex-row flex-wrap items-center justify-between gap-3">
                   <div>
                     <CardTitle>Tabs</CardTitle>
-                    <CardDescription>{selectedTabKeys.size} selected</CardDescription>
+                    <CardDescription>
+                      {eligibleTabs.length} idle / {selectedTabKeys.size} selected
+                    </CardDescription>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <Button
@@ -552,8 +611,7 @@ export default function App() {
                 </CardHeader>
                 <CardContent>
                   <TabsTable
-                    tabs={allTabs}
-                    workbenchByTab={workbenchByTab}
+                    tabs={eligibleTabs}
                     selected={selectedTabKeys}
                     onToggle={toggleTabSelection}
                     onDelete={(tab) =>
@@ -570,6 +628,9 @@ export default function App() {
                 selectedCount={selectedTabKeys.size}
                 onAddTabs={setAddTabsWorkbench}
                 onRemoveTabs={openRemoveTabs}
+                onRemoveTab={removeSingleWorkbenchTab}
+                onToggleRecording={toggleWorkbenchRecording}
+                recordingBusyIds={recordingWorkbenchIds}
                 onDelete={setDeleteWorkbench}
               />
             </div>
@@ -672,31 +733,52 @@ export default function App() {
 function BrowserTable({
   browsers,
   compact = false,
+  workbenchByTab,
+  selected,
+  onToggleTabSelection,
   onCreateTab,
   onEdit,
   onLaunch,
   onClose,
   onDelete,
+  onCloseTab,
 }: {
   browsers: BrowserInfo[];
   compact?: boolean;
+  workbenchByTab: Map<string, Workbench>;
+  selected: Set<string>;
+  onToggleTabSelection: (tab: TabInfo, checked: boolean) => void;
   onCreateTab: (browser: BrowserInfo) => void;
   onEdit: (browser: BrowserInfo) => void;
   onLaunch: (id: number) => void;
   onClose: (id: number) => void;
   onDelete: (id: number) => void;
+  onCloseTab: (tab: TabInfo) => void;
 }) {
+  const [expandedBrowserIds, setExpandedBrowserIds] = useState<Set<number>>(new Set());
+
+  function toggleExpanded(browserId: number) {
+    setExpandedBrowserIds((current) => {
+      const next = new Set(current);
+      if (next.has(browserId)) next.delete(browserId);
+      else next.add(browserId);
+      return next;
+    });
+  }
+
   return (
     <Card className={compact ? "" : "border-0 shadow-none"}>
       {compact && (
         <CardHeader>
           <CardTitle>Browsers</CardTitle>
+          <CardDescription>{browsers.length} persistent profiles</CardDescription>
         </CardHeader>
       )}
       <CardContent className={compact ? "" : "p-0"}>
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead>Details</TableHead>
               <TableHead>ID</TableHead>
               <TableHead>Name</TableHead>
               <TableHead>Status</TableHead>
@@ -706,58 +788,87 @@ function BrowserTable({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {!browsers.length && <EmptyRow colSpan={6}>No browsers configured</EmptyRow>}
-            {browsers.map((browser) => (
-              <TableRow key={browser.browser_id}>
-                <TableCell className="font-medium">{browser.browser_id}</TableCell>
-                <TableCell>
-                  <div className="font-medium">{browser.name || "unnamed"}</div>
-                  <div className="text-xs text-muted-foreground">{browser.proxy || "no proxy"}</div>
-                </TableCell>
-                <TableCell>
-                  <StatusBadge status={browser.status} />
-                </TableCell>
-                <TableCell>{browser.tab_count}</TableCell>
-                <TableCell>{browser.total_viewers}</TableCell>
-                <TableCell>
-                  <div className="flex justify-end gap-2">
-                    {browser.status === "idle" ? (
-                      <>
-                        <Button size="sm" onClick={() => onCreateTab(browser)}>
-                          <CirclePlus className="h-4 w-4" />
-                          Tab
-                        </Button>
-                        <Button size="sm" variant="outline" onClick={() => onEdit(browser)}>
-                          <Edit3 className="h-4 w-4" />
-                          Edit
-                        </Button>
-                        <Button size="sm" variant="warning" onClick={() => onClose(browser.browser_id)}>
-                          <Square className="h-4 w-4" />
-                          Stop
-                        </Button>
-                      </>
-                    ) : browser.status === "closed" || browser.status === "error" ? (
-                      <>
-                        <Button size="sm" onClick={() => onLaunch(browser.browser_id)}>
-                          <Power className="h-4 w-4" />
-                          Launch
-                        </Button>
-                        <Button size="sm" variant="outline" onClick={() => onEdit(browser)}>
-                          <Edit3 className="h-4 w-4" />
-                          Edit
-                        </Button>
-                        <Button size="sm" variant="destructive" onClick={() => onDelete(browser.browser_id)}>
-                          <Trash2 className="h-4 w-4" />
-                          Delete
-                        </Button>
-                      </>
-                    ) : (
-                      <Badge variant="warning">{browser.status}</Badge>
-                    )}
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
+            {!browsers.length && <EmptyRow colSpan={7}>No browsers configured</EmptyRow>}
+            {browsers.map((browser) => {
+              const expanded = expandedBrowserIds.has(browser.browser_id);
+              return (
+                <Fragment key={browser.browser_id}>
+                  <TableRow>
+                    <TableCell>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => toggleExpanded(browser.browser_id)}
+                        aria-label={expanded ? "Collapse browser tabs" : "Expand browser tabs"}
+                      >
+                        {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                        Tabs
+                      </Button>
+                    </TableCell>
+                    <TableCell className="font-medium">{browser.browser_id}</TableCell>
+                    <TableCell>
+                      <div className="font-medium">{browser.name || "unnamed"}</div>
+                      <div className="text-xs text-muted-foreground">{browser.proxy || "no proxy"}</div>
+                    </TableCell>
+                    <TableCell>
+                      <StatusBadge status={browser.status} />
+                    </TableCell>
+                    <TableCell>{browser.tab_count}</TableCell>
+                    <TableCell>{browser.total_viewers}</TableCell>
+                    <TableCell>
+                      <div className="flex justify-end gap-2">
+                        {browser.status === "idle" ? (
+                          <>
+                            <Button size="sm" onClick={() => onCreateTab(browser)}>
+                              <CirclePlus className="h-4 w-4" />
+                              Tab
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={() => onEdit(browser)}>
+                              <Edit3 className="h-4 w-4" />
+                              Edit
+                            </Button>
+                            <Button size="sm" variant="warning" onClick={() => onClose(browser.browser_id)}>
+                              <Square className="h-4 w-4" />
+                              Stop
+                            </Button>
+                          </>
+                        ) : browser.status === "closed" || browser.status === "error" ? (
+                          <>
+                            <Button size="sm" onClick={() => onLaunch(browser.browser_id)}>
+                              <Power className="h-4 w-4" />
+                              Launch
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={() => onEdit(browser)}>
+                              <Edit3 className="h-4 w-4" />
+                              Edit
+                            </Button>
+                            <Button size="sm" variant="destructive" onClick={() => onDelete(browser.browser_id)}>
+                              <Trash2 className="h-4 w-4" />
+                              Delete
+                            </Button>
+                          </>
+                        ) : (
+                          <Badge variant="warning">{browser.status}</Badge>
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                  {expanded && (
+                    <TableRow>
+                      <TableCell colSpan={7} className="bg-muted/30 p-0">
+                        <BrowserTabsPanel
+                          browser={browser}
+                          workbenchByTab={workbenchByTab}
+                          selected={selected}
+                          onToggleTabSelection={onToggleTabSelection}
+                          onCloseTab={onCloseTab}
+                        />
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </Fragment>
+              );
+            })}
           </TableBody>
         </Table>
       </CardContent>
@@ -765,15 +876,109 @@ function BrowserTable({
   );
 }
 
+function BrowserTabsPanel({
+  browser,
+  workbenchByTab,
+  selected,
+  onToggleTabSelection,
+  onCloseTab,
+}: {
+  browser: BrowserInfo;
+  workbenchByTab: Map<string, Workbench>;
+  selected: Set<string>;
+  onToggleTabSelection: (tab: TabInfo, checked: boolean) => void;
+  onCloseTab: (tab: TabInfo) => void;
+}) {
+  const tabs = browser.tabs || [];
+
+  return (
+    <div className="px-4 py-3">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead className="w-10" />
+            <TableHead>Tab</TableHead>
+            <TableHead>URL</TableHead>
+            <TableHead>Viewport</TableHead>
+            <TableHead>Workbench</TableHead>
+            <TableHead>Viewers</TableHead>
+            <TableHead className="text-right">Actions</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {!tabs.length && <EmptyRow colSpan={7}>No tabs in this browser</EmptyRow>}
+          {tabs.map((tab) => {
+            const key = tabKey(tab.browser_id, tab.tab_id);
+            const persistedWorkbench = workbenchByTab.get(key);
+            const assigned = Boolean(tab.workbench_id || persistedWorkbench);
+            const selectable = Boolean(tab.persistent && tab.created_by === "admin" && !assigned);
+            const viewport = tab.viewport || { width: 0, height: 0 };
+            return (
+              <TableRow key={key}>
+                <TableCell>
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-input"
+                    checked={selected.has(key)}
+                    disabled={!selectable}
+                    onChange={(event) => onToggleTabSelection(tab, event.target.checked)}
+                  />
+                </TableCell>
+                <TableCell className="font-medium">
+                  {tab.browser_id}/{tab.tab_id}
+                </TableCell>
+                <TableCell>
+                  <div className="max-w-[520px] truncate" title={tab.url || ""}>
+                    {truncate(tab.url || "about:blank", 92)}
+                  </div>
+                </TableCell>
+                <TableCell>{viewport.width && viewport.height ? `${viewport.width}x${viewport.height}` : "-"}</TableCell>
+                <TableCell>
+                  {assigned ? (
+                    <Badge variant="secondary">{tab.workbench_name || persistedWorkbench?.name || `#${tab.workbench_id}`}</Badge>
+                  ) : selectable ? (
+                    <Badge variant="muted">idle</Badge>
+                  ) : (
+                    <Badge variant="outline">temporary</Badge>
+                  )}
+                </TableCell>
+                <TableCell>{tab.viewer_count || 0}</TableCell>
+                <TableCell>
+                  <div className="flex justify-end gap-2">
+                    <Button size="sm" variant="outline" asChild>
+                      <a href={`/viewer/${tab.browser_id}/${tab.tab_id}`} target="_blank" rel="noreferrer">
+                        <ExternalLink className="h-4 w-4" />
+                        View
+                      </a>
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      disabled={assigned}
+                      onClick={() => onCloseTab(tab)}
+                      title={assigned ? "Release the tab from its workbench before closing it" : undefined}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      Close
+                    </Button>
+                  </div>
+                </TableCell>
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
 function TabsTable({
   tabs,
-  workbenchByTab,
   selected,
   onToggle,
   onDelete,
 }: {
   tabs: TabInfo[];
-  workbenchByTab: Map<string, Workbench>;
   selected: Set<string>;
   onToggle: (tab: TabInfo, checked: boolean) => void;
   onDelete: (tab: TabInfo) => void;
@@ -787,17 +992,13 @@ function TabsTable({
           <TableHead>URL</TableHead>
           <TableHead>Viewport</TableHead>
           <TableHead>Viewers</TableHead>
-          <TableHead>Workbench</TableHead>
           <TableHead className="text-right">Actions</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
-        {!tabs.length && <EmptyRow colSpan={7}>No tabs found</EmptyRow>}
+        {!tabs.length && <EmptyRow colSpan={6}>No idle tabs available</EmptyRow>}
         {tabs.map((tab) => {
           const key = tabKey(tab.browser_id, tab.tab_id);
-          const persistedWorkbench = workbenchByTab.get(key);
-          const assigned = Boolean(tab.workbench_id || persistedWorkbench);
-          const eligible = Boolean(tab.persistent && tab.created_by === "admin" && !assigned);
           const viewport = tab.viewport || { width: 1280, height: 720 };
           return (
             <TableRow key={key}>
@@ -806,7 +1007,6 @@ function TabsTable({
                   type="checkbox"
                   className="h-4 w-4 rounded border-input"
                   checked={selected.has(key)}
-                  disabled={!eligible}
                   onChange={(event) => onToggle(tab, event.target.checked)}
                 />
               </TableCell>
@@ -822,15 +1022,6 @@ function TabsTable({
                 {viewport.width}x{viewport.height}
               </TableCell>
               <TableCell>{tab.viewer_count || 0}</TableCell>
-              <TableCell>
-                {assigned ? (
-                  <Badge variant="secondary">{tab.workbench_name || persistedWorkbench?.name || `#${tab.workbench_id}`}</Badge>
-                ) : eligible ? (
-                  <Badge variant="muted">none</Badge>
-                ) : (
-                  <Badge variant="outline">temporary</Badge>
-                )}
-              </TableCell>
               <TableCell>
                 <div className="flex justify-end gap-2">
                   <Button size="sm" variant="outline" asChild>
@@ -856,74 +1047,240 @@ function TabsTable({
 function WorkbenchTable({
   workbenches,
   selectedCount,
+  onCreateWorkbench,
   onAddTabs,
   onRemoveTabs,
+  onRemoveTab,
+  onToggleRecording,
+  recordingBusyIds,
   onDelete,
 }: {
   workbenches: Workbench[];
   selectedCount: number;
+  onCreateWorkbench?: () => void;
   onAddTabs: (workbench: Workbench) => void;
   onRemoveTabs: (workbench: Workbench) => void;
+  onRemoveTab: (workbench: Workbench, tab: TabInfo) => void;
+  onToggleRecording: (workbench: Workbench) => void;
+  recordingBusyIds: Set<number>;
   onDelete: (workbench: Workbench) => void;
 }) {
+  const [expandedWorkbenchIds, setExpandedWorkbenchIds] = useState<Set<number>>(new Set());
+
+  function toggleExpanded(workbenchId: number) {
+    setExpandedWorkbenchIds((current) => {
+      const next = new Set(current);
+      if (next.has(workbenchId)) next.delete(workbenchId);
+      else next.add(workbenchId);
+      return next;
+    });
+  }
+
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>Workbenches</CardTitle>
-        <CardDescription>{workbenches.length} persisted groups</CardDescription>
+      <CardHeader className="flex-row flex-wrap items-center justify-between gap-3">
+        <div>
+          <CardTitle>Workbenches</CardTitle>
+          <CardDescription>
+            {workbenches.length} persisted groups / {selectedCount} selected
+          </CardDescription>
+        </div>
+        {onCreateWorkbench && (
+          <Button size="sm" disabled={!selectedCount} onClick={onCreateWorkbench}>
+            <CirclePlus className="h-4 w-4" />
+            Workbench
+          </Button>
+        )}
       </CardHeader>
       <CardContent>
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead>Details</TableHead>
               <TableHead>ID</TableHead>
               <TableHead>Name</TableHead>
               <TableHead>Tabs</TableHead>
-              <TableHead>Active</TableHead>
+              <TableHead>Current</TableHead>
+              <TableHead>Recording</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {!workbenches.length && <EmptyRow colSpan={5}>No workbenches created</EmptyRow>}
-            {workbenches.map((workbench) => (
-              <TableRow key={workbench.id}>
-                <TableCell className="font-medium">{workbench.id}</TableCell>
-                <TableCell>{workbench.name || "Workbench"}</TableCell>
-                <TableCell>{workbench.tab_count}</TableCell>
-                <TableCell>{workbench.active_tab_count}</TableCell>
-                <TableCell>
-                  <div className="flex justify-end gap-2">
-                    <Button size="sm" variant="outline" asChild>
-                      <a href={workbench.url} target="_blank" rel="noreferrer">
-                        <ExternalLink className="h-4 w-4" />
-                        Open
-                      </a>
-                    </Button>
-                    <Button size="sm" disabled={!selectedCount} onClick={() => onAddTabs(workbench)}>
-                      <CirclePlus className="h-4 w-4" />
-                      Add
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="warning"
-                      disabled={workbench.tab_count <= 1}
-                      onClick={() => onRemoveTabs(workbench)}
-                    >
-                      <X className="h-4 w-4" />
-                      Remove
-                    </Button>
-                    <Button size="sm" variant="destructive" onClick={() => onDelete(workbench)}>
-                      <Trash2 className="h-4 w-4" />
-                      Delete
-                    </Button>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
+            {!workbenches.length && <EmptyRow colSpan={7}>No workbenches created</EmptyRow>}
+            {workbenches.map((workbench) => {
+              const expanded = expandedWorkbenchIds.has(workbench.id);
+              const currentTab =
+                workbench.active_browser_id != null && workbench.active_tab_id != null
+                  ? `${workbench.active_browser_id}/${workbench.active_tab_id}`
+                  : "-";
+              const recordingBusy = recordingBusyIds.has(workbench.id);
+              return (
+                <Fragment key={workbench.id}>
+                  <TableRow>
+                    <TableCell>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => toggleExpanded(workbench.id)}
+                        aria-label={expanded ? "Collapse workbench tabs" : "Expand workbench tabs"}
+                      >
+                        {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                        Tabs
+                      </Button>
+                    </TableCell>
+                    <TableCell className="font-medium">{workbench.id}</TableCell>
+                    <TableCell>{workbench.name || "Workbench"}</TableCell>
+                    <TableCell>{workbench.tab_count}</TableCell>
+                    <TableCell>
+                      <div className="font-medium">{currentTab}</div>
+                      <div className="text-xs text-muted-foreground">{workbench.active_tab_count} live</div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="grid gap-1">
+                        <Badge variant={workbench.recording_enabled ? "destructive" : "muted"}>
+                          {workbench.recording_enabled ? "recording" : "idle"}
+                        </Badge>
+                        {workbench.recording_room && (
+                          <div className="max-w-[180px] truncate text-xs text-muted-foreground" title={workbench.recording_file || ""}>
+                            {workbench.recording_room}
+                          </div>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          size="sm"
+                          variant={workbench.recording_enabled ? "warning" : "outline"}
+                          disabled={recordingBusy || !workbench.active_room}
+                          onClick={() => onToggleRecording(workbench)}
+                        >
+                          {workbench.recording_enabled ? <Square className="h-4 w-4" /> : <CirclePlus className="h-4 w-4" />}
+                          {workbench.recording_enabled ? "Stop" : "Record"}
+                        </Button>
+                        <Button size="sm" variant="outline" asChild>
+                          <a href={workbench.url} target="_blank" rel="noreferrer">
+                            <ExternalLink className="h-4 w-4" />
+                            Open
+                          </a>
+                        </Button>
+                        <Button size="sm" disabled={!selectedCount} onClick={() => onAddTabs(workbench)}>
+                          <CirclePlus className="h-4 w-4" />
+                          Add
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="warning"
+                          disabled={workbench.tab_count <= 1}
+                          onClick={() => onRemoveTabs(workbench)}
+                        >
+                          <X className="h-4 w-4" />
+                          Remove
+                        </Button>
+                        <Button size="sm" variant="destructive" onClick={() => onDelete(workbench)}>
+                          <Trash2 className="h-4 w-4" />
+                          Delete
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                  {expanded && (
+                    <TableRow>
+                      <TableCell colSpan={7} className="bg-muted/30 p-0">
+                        <WorkbenchTabsPanel workbench={workbench} onRemoveTab={onRemoveTab} />
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </Fragment>
+              );
+            })}
           </TableBody>
         </Table>
       </CardContent>
     </Card>
+  );
+}
+
+function WorkbenchTabsPanel({
+  workbench,
+  onRemoveTab,
+}: {
+  workbench: Workbench;
+  onRemoveTab: (workbench: Workbench, tab: TabInfo) => void;
+}) {
+  const canRelease = workbench.tab_count > 1;
+
+  return (
+    <div className="px-4 py-3">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Tab</TableHead>
+            <TableHead>Status</TableHead>
+            <TableHead>URL</TableHead>
+            <TableHead>Viewport</TableHead>
+            <TableHead>Viewers</TableHead>
+            <TableHead className="text-right">Actions</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {!workbench.tabs.length && <EmptyRow colSpan={6}>No tabs in this workbench</EmptyRow>}
+          {workbench.tabs.map((tab) => {
+            const viewport = tab.viewport || { width: 0, height: 0 };
+            const isCurrent = tab.browser_id === workbench.active_browser_id && tab.tab_id === workbench.active_tab_id;
+            return (
+              <TableRow key={tabKey(tab.browser_id, tab.tab_id)}>
+                <TableCell className="font-medium">
+                  <div className="flex items-center gap-2">
+                    {tab.browser_id}/{tab.tab_id}
+                    {isCurrent && <Badge variant="default">current</Badge>}
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <Badge variant={tab.available === false ? "destructive" : "success"}>
+                    {tab.available === false ? "missing" : "active"}
+                  </Badge>
+                </TableCell>
+                <TableCell>
+                  <div className="max-w-[520px] truncate" title={tab.url || tab.allowed_hostname || ""}>
+                    {truncate(tab.url || tab.allowed_hostname || "missing", 92)}
+                  </div>
+                </TableCell>
+                <TableCell>{viewport.width && viewport.height ? `${viewport.width}x${viewport.height}` : "-"}</TableCell>
+                <TableCell>{tab.viewer_count || 0}</TableCell>
+                <TableCell>
+                  <div className="flex justify-end gap-2">
+                    {tab.available === false ? (
+                      <Button size="sm" variant="outline" disabled>
+                        <ExternalLink className="h-4 w-4" />
+                        View
+                      </Button>
+                    ) : (
+                      <Button size="sm" variant="outline" asChild>
+                        <a href={`/viewer/${tab.browser_id}/${tab.tab_id}`} target="_blank" rel="noreferrer">
+                          <ExternalLink className="h-4 w-4" />
+                          View
+                        </a>
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      variant="warning"
+                      disabled={!canRelease}
+                      onClick={() => onRemoveTab(workbench, tab)}
+                      title={canRelease ? undefined : "Delete the workbench to release its last tab"}
+                    >
+                      <X className="h-4 w-4" />
+                      Release
+                    </Button>
+                  </div>
+                </TableCell>
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
+    </div>
   );
 }
 
