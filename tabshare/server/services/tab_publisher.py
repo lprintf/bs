@@ -200,7 +200,7 @@ class TabPublisher:
             # Step 1: 在浏览器里获取 getDisplayMedia + createOffer (不涉及网络)
             # SDP munging: 根据配置强制使用指定 codec
             from server.config import VIDEO_CODEC
-            codec_pref = VIDEO_CODEC  # h264, vp9, av1
+            codec_pref = VIDEO_CODEC  # h264, vp8, vp9, av1
 
             offer_sdp = await self.page.evaluate("""async (codecPref) => {
                 window._webrtc = window._webrtc || {};
@@ -223,6 +223,7 @@ class TabPublisher:
                     // Map codec names
                     const codecNames = {
                         'h264': 'h264/',
+                        'vp8': 'vp8/',
                         'vp9': 'vp9/',
                         'av1': 'av1/'
                     };

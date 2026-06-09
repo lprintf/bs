@@ -297,7 +297,7 @@ async def serve_download(room_name: str, filename: str):
 async def get_codec():
     """获取当前视频编码偏好"""
     from server.config import VIDEO_CODEC
-    return {"codec": VIDEO_CODEC, "options": ["h264", "vp9", "av1"]}
+    return {"codec": VIDEO_CODEC, "options": ["h264", "vp8", "vp9", "av1"]}
 
 @app.put("/api/codec")
 async def set_codec(request: Request):
@@ -305,7 +305,7 @@ async def set_codec(request: Request):
     import server.config as cfg
     body = await request.json()
     codec = body.get("codec", "").lower()
-    if codec not in ("h264", "vp9", "av1"):
+    if codec not in ("h264", "vp8", "vp9", "av1"):
         return JSONResponse({"error": f"unsupported codec: {codec}"}, status_code=400)
     cfg.VIDEO_CODEC = codec
     os.environ["VIDEO_CODEC"] = codec

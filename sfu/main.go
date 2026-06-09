@@ -101,7 +101,7 @@ func main() {
 
 	log.Printf("SFU starting: NAT_IP=%s UDP_PORT=%d HTTP_PORT=%d", natIP, udpPort, httpPort)
 
-	// --- MediaEngine: register H.264 + VP9 + AV1 ---
+	// --- MediaEngine: register H.264 + VP8 + VP9 + AV1 ---
 	// Publisher SDP munging controls which codec is actually used.
 	// SFU just needs to support all options for flexibility.
 	me := &webrtc.MediaEngine{}
@@ -140,6 +140,14 @@ func main() {
 			},
 			PayloadType: 127,
 		},
+		// VP8 (used by the WebM recorder)
+		{
+			RTPCodecCapability: webrtc.RTPCodecCapability{
+				MimeType:  webrtc.MimeTypeVP8,
+				ClockRate: 90000,
+			},
+			PayloadType: 96,
+		},
 		// VP9
 		{
 			RTPCodecCapability: webrtc.RTPCodecCapability{
@@ -161,7 +169,7 @@ func main() {
 			log.Fatalf("Failed to register codec: %v", err)
 		}
 	}
-	log.Printf("MediaEngine: H.264 + VP9 + AV1 registered (publisher SDP controls selection)")
+	log.Printf("MediaEngine: H.264 + VP8 + VP9 + AV1 registered (publisher SDP controls selection)")
 
 	// --- pion SettingEngine ---
 	se := webrtc.SettingEngine{}
@@ -270,9 +278,11 @@ func handlePublisher(roomName string, room *Room, offer webrtc.SessionDescriptio
 
 	// Detect preferred codec from offer SDP
 	preferredMime := webrtc.MimeTypeH264 // default
-	if strings.Contains(offer.SDP, "VP9/90000") && !strings.Contains(offer.SDP, "H264/90000") {
+	if strings.Contains(offer.SDP, "VP8/90000") && !strings.Contains(offer.SDP, "H264/90000") {
+		preferredMime = webrtc.MimeTypeVP8
+	} else if strings.Contains(offer.SDP, "VP9/90000") && !strings.Contains(offer.SDP, "H264/90000") {
 		preferredMime = webrtc.MimeTypeVP9
-	} else if strings.Contains(offer.SDP, "AV1/90000") && !strings.Contains(offer.SDP, "H264/90000") && !strings.Contains(offer.SDP, "VP9/90000") {
+	} else if strings.Contains(offer.SDP, "AV1/90000") && !strings.Contains(offer.SDP, "H264/90000") && !strings.Contains(offer.SDP, "VP8/90000") && !strings.Contains(offer.SDP, "VP9/90000") {
 		preferredMime = webrtc.MimeTypeAV1
 	}
 
@@ -644,6 +654,8 @@ func isKeyframeStart(codecMime string, pkt *rtp.Packet) bool {
 	switch strings.ToLower(codecMime) {
 	case strings.ToLower(webrtc.MimeTypeH264):
 		return isH264KeyframeStart(pkt.Payload)
+	case strings.ToLower(webrtc.MimeTypeVP8):
+		return len(pkt.Payload) > 0 && (pkt.Payload[0]&0x1) == 0
 	case strings.ToLower(webrtc.MimeTypeVP9):
 		return isVP9KeyframeStart(pkt.Payload)
 	case strings.ToLower(webrtc.MimeTypeAV1):
