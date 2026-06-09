@@ -35,6 +35,7 @@ graph LR
 |------|------|
 | [v0 — CDP 图片传输](./design/v0-图片传输标签页共享.md) | 初版方案：CDP screencast + base64 图片推送 |
 | [v1 — WebRTC 原生共享](./design/v1-webrtc标签页共享.md) | 当前方案：Chrome 原生 WebRTC + CDP 输入 |
+| [v2 — Workbench 权限管理与身份认证网关](./design/v2-workbench权限管理与身份认证网关.md) | 系统管理员、用户授权、Workbench 访问控制、认证网关边界 |
 
 ### 版本记录
 
