@@ -20,3 +20,4 @@ description: git commit 消息撰写规则
   - Use the imperative, present tense: "change" not "changed" nor "changes".
   - The first letter of the subject should be lowercase (optional, but consistent).
   - No period at the end of the subject line.
+  - Commit locally by default; push only when collaboration, backup, PR, or release requires it.
