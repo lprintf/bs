@@ -37,6 +37,53 @@ flowchart LR
 
 认证网关必须清理所有外部传入的身份头，再注入可信身份头。TabShare 只能信任来自网关或内网的请求。
 
+## 网关基线
+
+V2 认证网关以 `demo/v0.12` 为 POC 基线。该版本已经验证 JWT/JWKS 离线验签、`kid` 轮换、session introspection、统一登录页、全局退出、身份头清洗和连接层参数，适合作为 TabShare 专用网关的起点。
+
+不能直接原样使用 `demo/v0.12`。它当前是通用 demo，默认 upstream 是 `app-service`，并且主要保护 `/api/`，还需要改成 TabShare 路由模型。
+
+### 复用内容
+
+| 能力 | 处理 |
+| --- | --- |
+| OpenResty 网关 | 复用 |
+| EdDSA JWT + JWKS | 复用 |
+| `iss` / `aud` / `exp` / `sub` 校验 | 复用 |
+| `X-User-Id` / `X-Request-Id` 注入 | 复用 |
+| 外部身份头清洗 | 复用 |
+| session introspection | 高风险动作预留 |
+| 登录页、SSO、logout demo | 作为 Auth Service 原型 |
+| upstream keepalive、worker、nofile 参数 | 复用并按 TabShare 压测调整 |
+
+### TabShare 专用改造
+
+| 项 | 改造要求 |
+| --- | --- |
+| upstream | `app_service` 改为 `tabshare:8085` |
+| `AUTH_AUDIENCE` | 改为 `tabshare-api` |
+| 页面路由 | `/admin`、`/workbench/*`、`/viewer/*` 需要认证后访问 |
+| API 路由 | `/api/*` 需要认证，未认证返回 JSON `401` |
+| WebSocket | `/ws/*` 需要认证并支持 `Upgrade` |
+| 静态资源 | `/static/*` 可公开，业务数据仍由 API 认证 |
+| 登录跳转 | 页面请求未登录时跳 `/login/page?redirect_uri=...` |
+| Header 清洗 | 所有转发路径都清空外部 `X-User-Id` 等身份头 |
+| SFU | 不暴露 SFU HTTP 管理口，只允许 TabShare 内部访问 |
+| debug | 网关认证后仍由 TabShare 用 `system_admin` 二次授权 |
+
+### 最小网关 POC 验收
+
+| 场景 | 预期 |
+| --- | --- |
+| 未登录访问 `/admin` | 跳转登录页 |
+| 登录后访问 `/admin` | 正常打开 |
+| `GET /api/admin/workbenches` | TabShare 收到可信 `X-User-Id` |
+| `/ws/workbench/{id}` | WebSocket 能通过网关连接 |
+| 外部伪造 `X-User-Id` | 被网关清洗，不能透传 |
+| `/static/*` | 不需要登录即可加载静态文件 |
+
+网关 POC 的目标只验证认证边界，不实现 Workbench 授权。Workbench ACL 在 TabShare 内完成。
+
 ## 角色模型
 
 | 角色 | 粒度 | 权限 |
@@ -260,15 +307,15 @@ TabShare 只接收内部 `user_id`。钉钉的 `unionId`、`openId`、`corpId`�
 
 | 阶段 | 目标 | 交付 |
 | --- | --- | --- |
-| 1 | 身份上下文 | FastAPI HTTP/WS 读取可信身份头，开发环境显式 mock |
-| 2 | 用户与管理员 | `users` 表、system_admin 初始化、`/api/me` |
-| 3 | Workbench ACL | `workbench_members`，创建者 owner，列表按用户过滤 |
-| 4 | API 授权 | Workbench CRUD、录制、文件下载、debug 接口补权限 |
-| 5 | WebSocket 授权 | 建连 read，控制消息 control，权限变化后断开 |
-| 6 | 管理 UI | 管理员分配用户；普通用户只看授权 Workbench |
-| 7 | Browser/Tab grant | 管理员把 Browser/Tab 分配给用户，用于创建 Workbench |
-| 8 | 审计 | 授权变更、录制、删除、控制权事件 |
-| 9 | Auth Gateway | 接入真实网关，清洗 header，保护 HTTP + WS |
+| 1 | TabShare 网关 POC | 从 `demo/v0.12` 抽出专用网关，保护页面、API、WebSocket |
+| 2 | 身份上下文 | FastAPI HTTP/WS 读取可信身份头，开发环境显式 mock |
+| 3 | 用户与管理员 | `users` 表、system_admin 初始化、`/api/me` |
+| 4 | Workbench ACL | `workbench_members`，创建者 owner，列表按用户过滤 |
+| 5 | API 授权 | Workbench CRUD、录制、文件下载、debug 接口补权限 |
+| 6 | WebSocket 授权 | 建连 read，控制消息 control，权限变化后断开 |
+| 7 | 管理 UI | 管理员分配用户；普通用户只看授权 Workbench |
+| 8 | Browser/Tab grant | 管理员把 Browser/Tab 分配给用户，用于创建 Workbench |
+| 9 | 审计 | 授权变更、录制、删除、控制权事件 |
 | 10 | 钉钉登录 | Auth Service 增加钉钉 Provider，绑定内部 user_id |
 
 ## 验收标准
