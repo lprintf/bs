@@ -14,7 +14,11 @@
 禁止使用任何降级、兜底、启发式补丁，或非严谨通用算法的后处理补救。
 
 ### 4. 多worktree多subagent开发
-使用gitworktree而不是主分支开发新需求，代码复杂任务可以拆分subagent开发，`.vscode/settings.json` 的 `git.scanRepositories` 中之存放未合并分支。
+1. 不在主分支直接开发；为任务创建本地 git worktree 和本地分支。
+2. 未合并的本地 worktree 分支加入 `.vscode/settings.json` 的 `git.scanRepositories`。
+3. 已合并或废弃的 worktree 分支从 `git.scanRepositories` 移除，并清理本地 worktree。
+4. 只有需要协作、备份、发起 PR 或上线发布时，才推送远程分支。
+5. 复杂任务可以拆分 subagent 并行开发，但最终合并前要自检、精简、提交清楚。
 
 ### 5. 自检与精简
 每次改动后，严格执行“Review 查 Bug → 第一性原理分析”流程，思考是否有更简单、更稳健的实现。
