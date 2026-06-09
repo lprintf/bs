@@ -64,6 +64,22 @@ Keep `worktree/` ignored by Git. Track only active task worktrees in local VS Co
 
 Do not commit `.vscode/settings.json`; active worktree lists are machine-local.
 
+After changing `.vscode/settings.json`, use the lightest refresh that works:
+
+| Need | Command |
+| --- | --- |
+| Refresh one detected repository | `Git: Refresh` |
+| Reopen repositories that VS Code previously closed | `Git: Reopen Closed Repositories` |
+| Add one active worktree explicitly | `Git: Open Repository` |
+| Restart Git and other extensions without reloading the window | `Developer: Restart Extension Host` |
+| Last resort | `Developer: Reload Window` |
+
+For ignored worktrees, prefer `Git: Open Repository` when you want deterministic behavior. Select the active worktree directory, for example:
+
+```text
+/home/lprintf/ai-space/bs/worktree/codex-task-name
+```
+
 ## Review Before Finishing
 
 | Check | Command |
