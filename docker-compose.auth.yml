@@ -20,6 +20,7 @@ services:
       - JWKS_FORCE_REFRESH_COOLDOWN_SECONDS=${JWKS_FORCE_REFRESH_COOLDOWN_SECONDS:-2}
       - SESSION_INTROSPECT_URL=http://auth-service:8000/internal/session/introspect
       - SESSION_RESOLVE_URL=http://auth-service:8000/internal/session/resolve
+      - AUTH_LOGIN_URL=${AUTH_LOGIN_URL:-}
     cpus: "2.00"
     mem_limit: 512m
     pids_limit: 512
@@ -44,8 +45,11 @@ services:
       - DEMO_USER_ID=${DEMO_USER_ID:-admin}
       - LOGIN_BRAND_NAME=${LOGIN_BRAND_NAME:-TabShare}
       - LOGIN_PRIMARY_COLOR=${LOGIN_PRIMARY_COLOR:-#1f6feb}
-      - LOGIN_ALLOWED_REDIRECT_HOSTS=${LOGIN_ALLOWED_REDIRECT_HOSTS:-127.0.0.1,localhost,gate-pilot.lprintf.com}
+      - LOGIN_ALLOWED_REDIRECT_HOSTS=${LOGIN_ALLOWED_REDIRECT_HOSTS:-127.0.0.1,localhost,bs-pilot.lprintf.com,gate-pilot.lprintf.com,auth-pilot.lprintf.com}
       - LOGIN_ALLOWED_REDIRECT_SUFFIXES=${LOGIN_ALLOWED_REDIRECT_SUFFIXES:--pilot.lprintf.com}
+      - AUTH_COOKIE_DOMAIN=${AUTH_COOKIE_DOMAIN:-}
+      - AUTH_COOKIE_SECURE=${AUTH_COOKIE_SECURE:-auto}
+      - AUTH_COOKIE_AUTO_DOMAIN_SUFFIXES=${AUTH_COOKIE_AUTO_DOMAIN_SUFFIXES:-lprintf.com}
     cpus: "2.00"
     mem_limit: 512m
     pids_limit: 512

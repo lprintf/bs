@@ -32,13 +32,20 @@ LOGIN_ALLOWED_REDIRECT_HOSTS = {
     host.strip().lower()
     for host in os.getenv(
         "LOGIN_ALLOWED_REDIRECT_HOSTS",
-        "127.0.0.1,localhost,app1.localhost,app2.localhost,gate-pilot.lprintf.com,app1-pilot.lprintf.com,app2-pilot.lprintf.com",
+        "127.0.0.1,localhost,bs-pilot.lprintf.com,gate-pilot.lprintf.com,auth-pilot.lprintf.com",
     ).split(",")
     if host.strip()
 }
 LOGIN_ALLOWED_REDIRECT_SUFFIXES = tuple(
     suffix.strip().lower()
     for suffix in os.getenv("LOGIN_ALLOWED_REDIRECT_SUFFIXES", "-pilot.lprintf.com").split(",")
+    if suffix.strip()
+)
+AUTH_COOKIE_DOMAIN = os.getenv("AUTH_COOKIE_DOMAIN", "").strip()
+AUTH_COOKIE_SECURE = os.getenv("AUTH_COOKIE_SECURE", "auto").strip().lower()
+AUTH_COOKIE_AUTO_DOMAIN_SUFFIXES = tuple(
+    suffix.strip().lstrip(".").lower()
+    for suffix in os.getenv("AUTH_COOKIE_AUTO_DOMAIN_SUFFIXES", "lprintf.com").split(",")
     if suffix.strip()
 )
 
@@ -116,6 +123,45 @@ def cookie_value(handler: BaseHTTPRequestHandler, name: str) -> str:
         if key == name:
             return value
     return ""
+
+
+def request_hostname(handler: BaseHTTPRequestHandler) -> str:
+    host = handler.headers.get("Host", "")
+    return host.split(":", 1)[0].lower()
+
+
+def cookie_domain_for_host(hostname: str) -> str:
+    if AUTH_COOKIE_DOMAIN:
+        return AUTH_COOKIE_DOMAIN
+    for suffix in AUTH_COOKIE_AUTO_DOMAIN_SUFFIXES:
+        if hostname == suffix or hostname.endswith("." + suffix):
+            return "." + suffix
+    return ""
+
+
+def cookie_secure_for_host(hostname: str) -> bool:
+    if AUTH_COOKIE_SECURE in {"1", "true", "yes", "on"}:
+        return True
+    if AUTH_COOKIE_SECURE in {"0", "false", "no", "off"}:
+        return False
+    return bool(cookie_domain_for_host(hostname))
+
+
+def session_cookie(handler: BaseHTTPRequestHandler, value: str, max_age: int) -> str:
+    hostname = request_hostname(handler)
+    parts = [
+        f"demo_auth_sid={value}",
+        "Path=/",
+        "HttpOnly",
+        "SameSite=Lax",
+        f"Max-Age={max_age}",
+    ]
+    domain = cookie_domain_for_host(hostname)
+    if domain:
+        parts.append(f"Domain={domain}")
+    if cookie_secure_for_host(hostname):
+        parts.append("Secure")
+    return "; ".join(parts)
 
 
 def build_redirect_with_token(redirect_uri: str, token: str) -> str:
@@ -395,7 +441,7 @@ class Handler(BaseHTTPRequestHandler):
             print(json.dumps({"event": "auth.logout.succeeded", "sid": sid}))
 
         headers = {
-            "Set-Cookie": "demo_auth_sid=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
+            "Set-Cookie": session_cookie(self, "", 0),
         }
         if redirect_allowed:
             redirect_response(self, build_redirect_with_logout(redirect_uri), headers=headers)
@@ -426,7 +472,7 @@ class Handler(BaseHTTPRequestHandler):
             "token_type": "Bearer",
             "expires_in": TTL_SECONDS,
         }, headers={
-            "Set-Cookie": f"demo_auth_sid={sid}; Path=/; HttpOnly; SameSite=Lax; Max-Age={TTL_SECONDS}",
+            "Set-Cookie": session_cookie(self, sid, TTL_SECONDS),
         })
 
     def handle_session_resolve(self) -> None:

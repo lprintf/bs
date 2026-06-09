@@ -66,10 +66,12 @@ V2 认证网关以 `demo/v0.12` 为 POC 基线。该版本已经验证 JWT/JWKS 
 | API 路由 | `/api/*` 需要认证，未认证返回 JSON `401` |
 | WebSocket | `/ws/*` 需要认证并支持 `Upgrade` |
 | 静态资源 | `/static/*` 可公开，业务数据仍由 API 认证 |
-| 登录跳转 | 页面请求未登录时跳 `/login/page?redirect_uri=...` |
+| 登录跳转 | 页面请求未登录时跳登录域；pilot 使用 `https://auth-pilot.lprintf.com/login/page?redirect_uri=...` |
 | Header 清洗 | 所有转发路径都清空外部 `X-User-Id` 等身份头 |
 | SFU | 不暴露 SFU HTTP 管理口，只允许 TabShare 内部访问 |
 | debug | 网关认证后仍由 TabShare 用 `system_admin` 二次授权 |
+
+pilot 环境的业务入口使用 `https://bs-pilot.lprintf.com/admin`，认证入口使用 `https://auth-pilot.lprintf.com/login/page`。两个域都映射到 auth-gateway 的 `18080`，由网关按 Host 分流；Auth Service 在 `.lprintf.com` 写入 `Secure` session cookie，登录后回到业务域。
 
 ### 最小网关 POC 验收
 

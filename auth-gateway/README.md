@@ -26,6 +26,20 @@ docker compose -f docker-compose.yml -f docker-compose.auth.yml up -d --build
 http://127.0.0.1:18080/admin
 ```
 
+公网 pilot 推荐使用业务域访问：
+
+```text
+https://bs-pilot.lprintf.com/admin
+```
+
+未登录时网关会跳到：
+
+```text
+https://auth-pilot.lprintf.com/login/page
+```
+
+Auth Service 会在 `*.lprintf.com` 下自动设置跨子域 POC cookie，登录后回到 `bs-pilot.lprintf.com`。
+
 默认 POC 账号：
 
 ```text

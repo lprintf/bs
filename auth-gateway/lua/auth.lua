@@ -3,6 +3,36 @@ local jwt = require "jwt"
 local session = require "session"
 
 local _M = {}
+local AUTH_LOGIN_URL = os.getenv("AUTH_LOGIN_URL") or ""
+
+local function host_without_port()
+    local host = ngx.var.http_host or ngx.var.host or ""
+    return host:gsub(":%d+$", "")
+end
+
+local function public_proto(hostname)
+    local forwarded = ngx.var.http_x_forwarded_proto
+    if forwarded and forwarded ~= "" then
+        return forwarded
+    end
+    if hostname:match("%.lprintf%.com$") then
+        return "https"
+    end
+    return ngx.var.scheme or "http"
+end
+
+local function login_url_for_host(hostname, proto)
+    if AUTH_LOGIN_URL ~= "" then
+        return AUTH_LOGIN_URL
+    end
+
+    local pilot_suffix = hostname:match("^[^.%-]+%-(.+%.lprintf%.com)$")
+    if pilot_suffix then
+        return proto .. "://auth-" .. pilot_suffix .. "/login/page"
+    end
+
+    return "/login/page"
+end
 
 local function write_json(status, body)
     ngx.status = status
@@ -12,13 +42,13 @@ local function write_json(status, body)
 end
 
 local function redirect_to_login()
-    local proto = ngx.var.http_x_forwarded_proto
-    if not proto or proto == "" then
-        proto = ngx.var.scheme or "http"
-    end
+    local hostname = host_without_port()
+    local proto = public_proto(hostname)
     local host = ngx.var.http_host or ngx.var.host
     local redirect_uri = proto .. "://" .. host .. ngx.var.request_uri
-    return ngx.redirect("/login/page?redirect_uri=" .. ngx.escape_uri(redirect_uri), ngx.HTTP_MOVED_TEMPORARILY)
+    local login_url = login_url_for_host(hostname, proto)
+    local separator = login_url:find("?", 1, true) and "&" or "?"
+    return ngx.redirect(login_url .. separator .. "redirect_uri=" .. ngx.escape_uri(redirect_uri), ngx.HTTP_MOVED_TEMPORARILY)
 end
 
 local function authenticate()
