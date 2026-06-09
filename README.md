@@ -8,6 +8,9 @@ TabShare 是一个容器化浏览器标签页实时共享系统。主链路由 F
 | --- | --- | --- | --- |
 | `docker-compose.yml` | 编排 `postgres`、`sfu`、`tabshare` | Compose 触发各镜像构建 | `docker compose up -d` |
 | `docker-compose.gpu.yml` | GPU 设备挂载和 VAAPI 环境覆盖 | 与主 compose 叠加 | `./start.sh intel` 或 `./start.sh amd` |
+| `docker-compose.auth.yml` | 叠加认证网关和 Auth Service POC | 与主 compose 叠加 | `docker compose -f docker-compose.yml -f docker-compose.auth.yml up -d --build` |
+| `auth-gateway/` | OpenResty 认证网关，保护 TabShare 页面/API/WS | Docker build | `auth-gateway:8080` |
+| `auth-service/` | 登录、JWT/JWKS、session POC | Docker build 时生成 demo key | `python /app/server.py` |
 | `sfu/` | Go WebRTC SFU、RTP 转发、WebM 录制 | 在 `sfu/Dockerfile` 的 `golang:1.24-alpine` build stage 内编译 | 容器内 `/usr/local/bin/sfu` |
 | `tabshare/` | FastAPI 服务、Playwright 浏览器管理、静态页面服务 | `tabshare/Dockerfile` 安装 Python 依赖；源码由 compose 挂载到 `/app` | `python -u -m server.app` |
 | `tabshare/admin-ui/` | React/Vite 管理后台源码 | 本地 Node 构建，产物写入 `tabshare/server/static/admin-spa` | FastAPI `/admin` 静态托管 |
@@ -55,10 +58,30 @@ tabshare/server/static/admin-spa/
 
 FastAPI 会优先从该目录托管 `/admin`。
 
+## 认证网关 POC
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.auth.yml up -d --build
+```
+
+访问：
+
+```text
+http://127.0.0.1:18080/admin
+```
+
+默认 POC 账号：
+
+```text
+admin@example.com / admin-password
+```
+
 ## 模块文档
 
 | 文档 | 说明 |
 | --- | --- |
+| [auth-gateway/README.md](./auth-gateway/README.md) | TabShare 认证网关 POC |
+| [auth-service/README.md](./auth-service/README.md) | Auth Service POC |
 | [sfu/README.md](./sfu/README.md) | SFU 和录制器说明 |
 | [tabshare/README.md](./tabshare/README.md) | FastAPI/Playwright 服务说明 |
 | [tabshare/admin-ui/README.md](./tabshare/admin-ui/README.md) | 管理后台构建说明 |

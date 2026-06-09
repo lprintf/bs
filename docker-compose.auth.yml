@@ -1,0 +1,55 @@
+services:
+  auth-gateway:
+    build:
+      context: ./auth-gateway
+    restart: unless-stopped
+    depends_on:
+      - auth-service
+      - sfu
+      - tabshare
+    ports:
+      - "${AUTH_GATEWAY_PORT:-18080}:8080"
+    volumes:
+      - ./auth-gateway/nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro
+      - ./auth-gateway/lua:/etc/nginx/lua:ro
+    environment:
+      - AUTH_ISSUER=${AUTH_ISSUER:-tabshare-auth}
+      - AUTH_AUDIENCE=${AUTH_AUDIENCE:-tabshare-api}
+      - JWKS_URL=http://auth-service:8000/.well-known/jwks.json
+      - JWKS_REFRESH_INTERVAL_SECONDS=${JWKS_REFRESH_INTERVAL_SECONDS:-30}
+      - JWKS_FORCE_REFRESH_COOLDOWN_SECONDS=${JWKS_FORCE_REFRESH_COOLDOWN_SECONDS:-2}
+      - SESSION_INTROSPECT_URL=http://auth-service:8000/internal/session/introspect
+      - SESSION_RESOLVE_URL=http://auth-service:8000/internal/session/resolve
+    cpus: "2.00"
+    mem_limit: 512m
+    pids_limit: 512
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+
+  auth-service:
+    build:
+      context: ./auth-service
+    restart: unless-stopped
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      - AUTH_ISSUER=${AUTH_ISSUER:-tabshare-auth}
+      - AUTH_AUDIENCE=${AUTH_AUDIENCE:-tabshare-api}
+      - JWT_KEY_ID=${JWT_KEY_ID:-demo-ed25519-1}
+      - JWKS_PUBLISHED_KEY_IDS=${JWKS_PUBLISHED_KEY_IDS:-demo-ed25519-1}
+      - ACCESS_TOKEN_TTL_SECONDS=${ACCESS_TOKEN_TTL_SECONDS:-600}
+      - DEMO_USER_EMAIL=${DEMO_USER_EMAIL:-admin@example.com}
+      - DEMO_USER_PASSWORD=${DEMO_USER_PASSWORD:-admin-password}
+      - DEMO_USER_ID=${DEMO_USER_ID:-admin}
+      - LOGIN_BRAND_NAME=${LOGIN_BRAND_NAME:-TabShare}
+      - LOGIN_PRIMARY_COLOR=${LOGIN_PRIMARY_COLOR:-#1f6feb}
+      - LOGIN_ALLOWED_REDIRECT_HOSTS=${LOGIN_ALLOWED_REDIRECT_HOSTS:-127.0.0.1,localhost,gate-pilot.lprintf.com}
+      - LOGIN_ALLOWED_REDIRECT_SUFFIXES=${LOGIN_ALLOWED_REDIRECT_SUFFIXES:--pilot.lprintf.com}
+    cpus: "2.00"
+    mem_limit: 512m
+    pids_limit: 512
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
