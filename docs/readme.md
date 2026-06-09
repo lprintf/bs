@@ -19,6 +19,16 @@ graph LR
 
 ## 文档索引
 
+### 模块说明
+
+| 文档 | 说明 |
+|------|------|
+| [项目根 README](../README.md) | 子模块职责、构建方式和启动入口 |
+| [SFU](../sfu/README.md) | Go SFU、容器内编译和录制目录 |
+| [TabShare Service](../tabshare/README.md) | FastAPI/Playwright 服务、容器运行方式 |
+| [Admin UI](../tabshare/admin-ui/README.md) | React/Vite 管理后台构建和产物位置 |
+| [Scripts](../scripts/README.md) | 运维脚本和诊断脚本 |
+
 ### 技术方案
 
 | 文档 | 说明 |
