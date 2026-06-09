@@ -10,6 +10,13 @@ from sqlalchemy.exc import IntegrityError
 from server.services.browser_manager import browser_manager
 from server.services.browser_instance import UPLOADS_DIR, _url_hostname
 from server.services.database import async_session, TabModel, WorkbenchModel, WorkbenchTabModel
+from server.services.workbench_runtime import (
+    WorkbenchRuntimeError,
+    ensure_active_tab,
+    get_recording_status,
+    set_active_tab,
+    set_recording,
+)
 
 router = APIRouter(prefix="/api/admin", tags=["Management"])
 
@@ -61,8 +68,16 @@ class WorkbenchTabsRequest(BaseModel):
     tabs: list[WorkbenchTabRef]
 
 
+class WorkbenchRecordingRequest(BaseModel):
+    recording: bool
+
+
 def _workbench_url(workbench_id: int) -> str:
     return f"/workbench/{workbench_id}"
+
+
+def _runtime_error(exc: WorkbenchRuntimeError) -> HTTPException:
+    return HTTPException(status_code=exc.status_code, detail=exc.detail)
 
 
 async def _get_workbench_row(workbench_id: int):
@@ -449,7 +464,12 @@ async def create_workbench(req: WorkbenchRequest):
     async with async_session() as session:
         await _ensure_tabs_can_join_workbench(session, selected)
 
-        wb = WorkbenchModel(name=name)
+        first_tab = selected[0][1]
+        wb = WorkbenchModel(
+            name=name,
+            active_browser_id=first_tab.browser_id,
+            active_tab_id=first_tab.tab_id,
+        )
         session.add(wb)
         await session.flush()
         for _browser, tab, hostname in selected:
@@ -539,6 +559,7 @@ async def remove_workbench_tabs(workbench_id: int, req: WorkbenchTabsRequest):
         raise HTTPException(status_code=404, detail=f"Tabs are not in this workbench: {label}")
     if len(rows) - len(requested) < 1:
         raise HTTPException(status_code=400, detail="Cannot remove the last tab; delete the workbench instead")
+    old_active = (wb.active_browser_id, wb.active_tab_id)
 
     async with async_session() as session:
         result = await session.execute(
@@ -555,6 +576,13 @@ async def remove_workbench_tabs(workbench_id: int, req: WorkbenchTabsRequest):
         browser = browser_manager.get_browser(row.browser_id)
         if browser:
             browser.clear_tab_workbench(row.tab_id, workbench_id)
+
+    if old_active in requested:
+        try:
+            active = await ensure_active_tab(workbench_id)
+            await set_active_tab(workbench_id, active["browser_id"], active["tab_id"])
+        except WorkbenchRuntimeError:
+            pass
 
     wb_row, tab_rows = await _get_workbench_row(workbench_id)
     data = await _serialize_workbench(wb_row, tab_rows, apply_runtime=True)
@@ -582,6 +610,10 @@ async def list_workbenches():
 
     workbenches = []
     for wb in rows:
+        try:
+            await ensure_active_tab(wb.id)
+        except WorkbenchRuntimeError:
+            pass
         wb_row, tab_rows = await _get_workbench_row(wb.id)
         if wb_row:
             workbenches.append(await _serialize_workbench(wb_row, tab_rows))
@@ -594,10 +626,41 @@ async def get_workbench(workbench_id: int):
     wb, rows = await _get_workbench_row(workbench_id)
     if not wb:
         raise HTTPException(status_code=404, detail=f"Workbench {workbench_id} not found")
+    try:
+        await ensure_active_tab(workbench_id)
+    except WorkbenchRuntimeError as exc:
+        raise _runtime_error(exc)
+    wb, rows = await _get_workbench_row(workbench_id)
     data = await _serialize_workbench(wb, rows, apply_runtime=True)
     if not data["active_tabs"]:
         raise HTTPException(status_code=409, detail="Workbench has no active tabs")
     return data
+
+
+@router.get("/workbenches/{workbench_id}/recording")
+async def get_workbench_recording(workbench_id: int):
+    try:
+        return await get_recording_status(workbench_id)
+    except WorkbenchRuntimeError as exc:
+        raise _runtime_error(exc)
+
+
+@router.post("/workbenches/{workbench_id}/recording")
+async def set_workbench_recording(workbench_id: int, req: WorkbenchRecordingRequest):
+    try:
+        result = await set_recording(workbench_id, req.recording)
+    except WorkbenchRuntimeError as exc:
+        raise _runtime_error(exc)
+
+    from server.api.ws import notify_workbench_clients
+    await notify_workbench_clients(workbench_id, {
+        "type": "recording_state",
+        "workbench_id": workbench_id,
+        "recording_enabled": result["recording_enabled"],
+        "recording_room": result["recording_room"],
+        "recording_file": result["recording_file"],
+    })
+    return result
 
 
 @router.delete("/workbenches/{workbench_id}")
@@ -607,6 +670,11 @@ async def delete_workbench(workbench_id: int):
     if not wb:
         raise HTTPException(status_code=404, detail=f"Workbench {workbench_id} not found")
     workbench_name = wb.name or f"Workbench {workbench_id}"
+    if wb.recording_enabled or wb.recording_room:
+        try:
+            await set_recording(workbench_id, False)
+        except WorkbenchRuntimeError:
+            pass
 
     async with async_session() as session:
         await session.execute(delete(WorkbenchTabModel).where(WorkbenchTabModel.workbench_id == workbench_id))

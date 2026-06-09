@@ -43,20 +43,36 @@
         if (!url.match(/^https?:\/\//)) url = 'https://' + url;
         if (isWorkbench && !isUrlAllowedForActiveTab(url)) return;
         urlInput.value = url;
+        if (isWorkbench) {
+            sendWorkbenchCommand('navigate', { url });
+            return;
+        }
         navApi(`/api/admin/browsers/${activeBrowserId}/tabs/${activeTabId}/navigate`, { url });
     }
 
     async function navBack() {
+        if (isWorkbench) {
+            sendWorkbenchCommand('back');
+            return;
+        }
         const result = await navApi(`/api/admin/browsers/${activeBrowserId}/tabs/${activeTabId}/back`);
         if (result && result.url) urlInput.value = result.url;
     }
 
     async function navForward() {
+        if (isWorkbench) {
+            sendWorkbenchCommand('forward');
+            return;
+        }
         const result = await navApi(`/api/admin/browsers/${activeBrowserId}/tabs/${activeTabId}/forward`);
         if (result && result.url) urlInput.value = result.url;
     }
 
     function navReload() {
+        if (isWorkbench) {
+            if (urlInput.value) sendWorkbenchCommand('navigate', { url: urlInput.value });
+            return;
+        }
         if (urlInput.value) {
             navApi(`/api/admin/browsers/${activeBrowserId}/tabs/${activeTabId}/navigate`, { url: urlInput.value });
         }
@@ -79,6 +95,9 @@
     let switchInProgress = false;
     let workbenchDeleted = false;
     let workbenchDeleteRedirectTimer = null;
+    let isWorkbenchController = !isWorkbench;
+    let workbenchClientId = null;
+    const controlBtn = document.getElementById('controlBtn');
 
     function setStatus(text, type) {
         statusEl.textContent = text;
@@ -111,6 +130,37 @@
     `;
         document.body.appendChild(toast);
         setTimeout(() => { if (toast.parentElement) toast.remove(); }, type === 'error' ? 6000 : 3500);
+    }
+
+    function updateControlUI() {
+        if (!controlBtn) return;
+        if (!isWorkbench) {
+            controlBtn.style.display = 'none';
+            return;
+        }
+        controlBtn.style.display = 'inline-flex';
+        controlBtn.classList.toggle('active', isWorkbenchController);
+        controlBtn.disabled = isWorkbenchController;
+        controlBtn.textContent = isWorkbenchController ? 'In control' : 'Take control';
+        controlBtn.title = isWorkbenchController ? 'You control this Workbench' : 'Take Workbench control';
+    }
+
+    function canControlWorkbench(show = true) {
+        if (!isWorkbench || isWorkbenchController) return true;
+        if (show) showNotice('请先获取工作台控制权', 'info');
+        return false;
+    }
+
+    function sendWorkbenchCommand(type, payload = {}) {
+        if (!canControlWorkbench()) return false;
+        if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+        ws.send(JSON.stringify({ type, ...payload }));
+        return true;
+    }
+
+    function takeWorkbenchControl() {
+        if (!isWorkbench || !ws || ws.readyState !== WebSocket.OPEN || isWorkbenchController) return;
+        ws.send(JSON.stringify({ type: 'request_control' }));
     }
 
     function isUrlAllowedForActiveTab(url) {
@@ -217,7 +267,8 @@
 
             ws.onopen = () => {
                 setStatus('Waiting for stream…', 'connecting');
-                applyResolution();
+                if (!isWorkbench) applyResolution();
+                updateControlUI();
                 renderTabBar();
                 fetchCurrentTabUrl();
                 // Connect SFU after viewport is applied (give backend time to resize)
@@ -228,7 +279,33 @@
             ws.onmessage = async (ev) => {
                 try {
                     const msg = JSON.parse(ev.data);
-                    if (msg.type === 'workbench_deleted') {
+                    if (msg.type === 'control_state') {
+                        workbenchClientId = msg.client_id || workbenchClientId;
+                        const wasController = isWorkbenchController;
+                        isWorkbenchController = !!msg.is_controller;
+                        updateControlUI();
+                        if (isWorkbenchController && !wasController) applyResolution();
+                    } else if (msg.type === 'control_granted') {
+                        isWorkbenchController = true;
+                        updateControlUI();
+                        applyResolution();
+                        showNotice(msg.message || '已获得工作台控制权', 'info');
+                    } else if (msg.type === 'control_taken') {
+                        isWorkbenchController = false;
+                        updateControlUI();
+                        showNotice(msg.message || '控制权已被接管', 'info');
+                    } else if (msg.type === 'control_required') {
+                        isWorkbenchController = false;
+                        updateControlUI();
+                        showNotice(msg.message || '请先获取控制权', 'info');
+                    } else if (msg.type === 'active_tab_changed') {
+                        if (isWorkbench && Number.isInteger(msg.browser_id) && Number.isInteger(msg.tab_id)) {
+                            if (isWorkbenchController && msg.browser_id === activeBrowserId && msg.tab_id === activeTabId) return;
+                            await followWorkbenchActiveTab(msg.browser_id, msg.tab_id);
+                        }
+                    } else if (msg.type === 'recording_state') {
+                        showNotice(msg.recording_enabled ? '工作台录制已开启' : '工作台录制已停止', 'info');
+                    } else if (msg.type === 'workbench_deleted') {
                         workbenchDeleted = true;
                         if (pendingControlSwitch) {
                             pendingControlSwitch.reject(new Error(msg.message || 'Workbench deleted'));
@@ -255,7 +332,7 @@
                             const nextKey = activeBrowserId !== null ? `${activeBrowserId}:${activeTabId}` : '';
                             showNotice(msg.message || '工作台已更新');
                             if (currentKey && nextKey && currentKey !== nextKey) {
-                                switchTab(activeBrowserId, activeTabId);
+                                await followWorkbenchActiveTab(activeBrowserId, activeTabId);
                             }
                         }
                     } else if (msg.type === 'switch_tab_done') {
@@ -353,9 +430,7 @@
     let currentRes = { w: 1920, h: 1080 }; // default
 
     function sendViewport(w, h) {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'viewport', width: w, height: h }));
-        }
+        sendInput({ type: 'viewport', width: w, height: h });
     }
 
     function applyResolution() {
@@ -464,9 +539,13 @@
     }
 
     function sendInput(data) {
+        const quiet = data.type === 'mouse' && data.eventType === 'mouseMoved';
+        if (!canControlWorkbench(!quiet)) return false;
         if (ws?.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify(data));
+            return true;
         }
+        return false;
     }
 
     // ─── Mouse Events (on Video) ───
@@ -512,6 +591,7 @@
     const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
 
     async function sendFileViaWS(file) {
+        if (!canControlWorkbench()) return;
         if (!file || !file.type.startsWith('image/')) return;
         if (file.size > MAX_FILE_SIZE) {
             console.warn(`File too large: ${(file.size / 1024 / 1024).toFixed(1)}MB (max 5MB)`);
@@ -890,8 +970,9 @@
         }));
         if (!myTabs.length) throw new Error('Workbench has no valid tabs');
 
-        const activeParam = new URLSearchParams(location.search).get('active');
-        const active = activeParam ? myTabs.find(t => tabRefKey(t) === activeParam) : null;
+        const active = Number.isInteger(data.active_browser_id) && Number.isInteger(data.active_tab_id)
+            ? myTabs.find(t => t.browser_id === data.active_browser_id && t.tab_id === data.active_tab_id)
+            : null;
         const first = active || myTabs[0];
         setActiveTab(first.browser_id, first.tab_id, false);
     }
@@ -932,6 +1013,7 @@
 
     function switchControlTab(browserId, tabId) {
         if (!isWorkbench) return Promise.resolve(true);
+        if (!canControlWorkbench()) return Promise.resolve(false);
         if (!ws || ws.readyState !== WebSocket.OPEN) return Promise.resolve(false);
 
         if (pendingControlSwitch) {
@@ -1000,7 +1082,7 @@
                         console.warn('[viewer] fast switch produced no decoded frame, falling back to reconnect');
                         return false;
                     }
-                    if (isWorkbench) {
+                    if (isWorkbench && isWorkbenchController) {
                         try {
                             if (!await switchControlTab(activeBrowserId, activeTabId)) return false;
                         } catch (e) {
@@ -1090,6 +1172,9 @@
             console.log('[viewer] switch ignored while another switch is in progress');
             return;
         }
+        if (isWorkbench && !canControlWorkbench()) {
+            return;
+        }
         if (tabId === undefined) {
             tabId = browserId;
             browserId = activeBrowserId;
@@ -1122,6 +1207,19 @@
         } finally {
             switchInProgress = false;
         }
+    }
+
+    async function followWorkbenchActiveTab(browserId, tabId) {
+        if (!isWorkbench) return;
+        const targetRoom = `${browserId}_${tabId}`;
+        if (browserId === activeBrowserId && tabId === activeTabId && displayedRoom === targetRoom) return;
+        if (!myTabs.some(t => t.browser_id === browserId && t.tab_id === tabId)) {
+            await loadWorkbenchTabs();
+        }
+        setActiveTab(browserId, tabId);
+        renderTabBar();
+        if (await switchStreamFast()) return;
+        startSession();
     }
 
     async function closeTab(browserId, tabId) {
@@ -1196,6 +1294,10 @@
     }
 
     async function uploadFile(input) {
+        if (!canControlWorkbench()) {
+            input.value = '';
+            return;
+        }
         const file = input.files[0];
         if (!file) return;
         const formData = new FormData();
@@ -1230,6 +1332,7 @@
     window.navGo = navGo;
     let _translated = false;
     function translatePage() {
+        if (!canControlWorkbench()) return;
         if (ws && ws.readyState === WebSocket.OPEN) {
             _translated = !_translated;
             ws.send(JSON.stringify({ type: 'translate', restore: !_translated }));
@@ -1246,6 +1349,7 @@
                 loadViewerTabs();
                 setActiveTab(initialBrowserId, initialTabId, false);
             }
+            updateControlUI();
             renderTabBar();
             fetchCurrentTabUrl();
             startSession();
@@ -1267,5 +1371,6 @@
     window.createNewTab = createNewTab;
     window.uploadFile = uploadFile;
     window.translatePage = translatePage;
+    window.takeWorkbenchControl = takeWorkbenchControl;
     init();
 })();

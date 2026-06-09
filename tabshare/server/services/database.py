@@ -88,6 +88,11 @@ class WorkbenchModel(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(255), default="")
+    active_browser_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    active_tab_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    recording_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    recording_room: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    recording_file: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -96,6 +101,16 @@ class WorkbenchModel(Base):
         return {
             "id": self.id,
             "name": self.name,
+            "active_browser_id": self.active_browser_id,
+            "active_tab_id": self.active_tab_id,
+            "active_room": (
+                f"{self.active_browser_id}_{self.active_tab_id}"
+                if self.active_browser_id is not None and self.active_tab_id is not None
+                else None
+            ),
+            "recording_enabled": self.recording_enabled,
+            "recording_room": self.recording_room,
+            "recording_file": self.recording_file,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 
@@ -135,6 +150,26 @@ async def init_db():
         await conn.execute(text(
             "ALTER TABLE browsers "
             "ADD COLUMN IF NOT EXISTS restore_on_start BOOLEAN NOT NULL DEFAULT FALSE"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE workbenches "
+            "ADD COLUMN IF NOT EXISTS active_browser_id INTEGER"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE workbenches "
+            "ADD COLUMN IF NOT EXISTS active_tab_id INTEGER"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE workbenches "
+            "ADD COLUMN IF NOT EXISTS recording_enabled BOOLEAN NOT NULL DEFAULT FALSE"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE workbenches "
+            "ADD COLUMN IF NOT EXISTS recording_room VARCHAR(255)"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE workbenches "
+            "ADD COLUMN IF NOT EXISTS recording_file VARCHAR(1024)"
         ))
     print("[database] tables initialized")
 

@@ -6,13 +6,19 @@ Route: /ws/tab/{browser_id}/{tab_id}
 """
 import json
 import asyncio
+import uuid
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from sqlalchemy import select
 from server.services.browser_manager import browser_manager
-from server.services.database import async_session, WorkbenchTabModel
+from server.services.workbench_runtime import (
+    WorkbenchRuntimeError,
+    set_active_tab,
+    workbench_allowed_tabs,
+)
 
 router = APIRouter()
 _workbench_clients: dict[int, set[WebSocket]] = {}
+_workbench_controllers: dict[int, WebSocket] = {}
+_workbench_client_ids: dict[WebSocket, str] = {}
 _workbench_clients_lock = asyncio.Lock()
 
 
@@ -20,6 +26,11 @@ async def close_workbench_clients(workbench_id: int, message: str = "Workbench d
     """Notify and close all open control sockets for a deleted workbench."""
     async with _workbench_clients_lock:
         clients = list(_workbench_clients.pop(workbench_id, set()))
+        controller = _workbench_controllers.pop(workbench_id, None)
+        for websocket in clients:
+            _workbench_client_ids.pop(websocket, None)
+        if controller is not None:
+            _workbench_client_ids.pop(controller, None)
 
     payload = json.dumps({
         "type": "workbench_deleted",
@@ -52,6 +63,69 @@ async def notify_workbench_clients(workbench_id: int, event: dict):
             pass
 
 
+async def _send_workbench_control_state(workbench_id: int):
+    async with _workbench_clients_lock:
+        clients = list(_workbench_clients.get(workbench_id, set()))
+        controller = _workbench_controllers.get(workbench_id)
+        controller_id = _workbench_client_ids.get(controller) if controller else None
+        states = [
+            (
+                websocket,
+                {
+                    "type": "control_state",
+                    "workbench_id": workbench_id,
+                    "client_id": _workbench_client_ids.get(websocket),
+                    "controller_id": controller_id,
+                    "is_controller": websocket is controller,
+                },
+            )
+            for websocket in clients
+        ]
+
+    for websocket, payload in states:
+        try:
+            await websocket.send_text(json.dumps(payload))
+        except Exception:
+            pass
+
+
+async def _take_workbench_control(workbench_id: int, websocket: WebSocket, notify_old: bool = True):
+    old_controller = None
+    async with _workbench_clients_lock:
+        old_controller = _workbench_controllers.get(workbench_id)
+        _workbench_controllers[workbench_id] = websocket
+        new_id = _workbench_client_ids.get(websocket)
+    if notify_old and old_controller is not None and old_controller is not websocket:
+        try:
+            await old_controller.send_text(json.dumps({
+                "type": "control_taken",
+                "workbench_id": workbench_id,
+                "by": new_id,
+                "message": "控制权已被其他用户接管",
+            }))
+        except Exception:
+            pass
+    await _send_workbench_control_state(workbench_id)
+
+
+async def _is_workbench_controller(workbench_id: int | None, websocket: WebSocket) -> bool:
+    if workbench_id is None:
+        return True
+    async with _workbench_clients_lock:
+        return _workbench_controllers.get(workbench_id) is websocket
+
+
+async def _reject_non_controller(websocket: WebSocket, workbench_id: int | None) -> bool:
+    if await _is_workbench_controller(workbench_id, websocket):
+        return False
+    await websocket.send_text(json.dumps({
+        "type": "control_required",
+        "workbench_id": workbench_id,
+        "message": "请先获取控制权",
+    }))
+    return True
+
+
 @router.websocket("/ws/tab/{browser_id}/{tab_id}")
 async def ws_input(websocket: WebSocket, browser_id: int, tab_id: int):
     tab = browser_manager.find_tab(browser_id, tab_id)
@@ -73,7 +147,7 @@ async def ws_workbench_input(websocket: WebSocket, workbench_id: int):
         await websocket.close(code=4000, reason="Invalid initial tab")
         return
 
-    allowed_tabs = await _workbench_allowed_tabs(workbench_id)
+    allowed_tabs = await workbench_allowed_tabs(workbench_id)
     if (browser_id, tab_id) not in allowed_tabs:
         await websocket.close(code=4003, reason="Tab is not in workbench")
         return
@@ -84,26 +158,43 @@ async def ws_workbench_input(websocket: WebSocket, workbench_id: int):
         return
 
     await websocket.accept()
+    client_id = uuid.uuid4().hex[:10]
+    became_controller = False
     async with _workbench_clients_lock:
         _workbench_clients.setdefault(workbench_id, set()).add(websocket)
+        _workbench_client_ids[websocket] = client_id
+        if workbench_id not in _workbench_controllers:
+            _workbench_controllers[workbench_id] = websocket
+            became_controller = True
+    await _send_workbench_control_state(workbench_id)
+    if became_controller:
+        await websocket.send_text(json.dumps({
+            "type": "control_granted",
+            "workbench_id": workbench_id,
+            "message": "已获得工作台控制权",
+        }))
     try:
         browser_manager.add_viewer(browser_id, tab_id, websocket)
         await _input_loop(websocket, tab, allow_switch=allowed_tabs, workbench_id=workbench_id)
     finally:
+        controller_changed = False
         async with _workbench_clients_lock:
             clients = _workbench_clients.get(workbench_id)
             if clients is not None:
                 clients.discard(websocket)
                 if not clients:
                     _workbench_clients.pop(workbench_id, None)
-
-
-async def _workbench_allowed_tabs(workbench_id: int) -> set[tuple[int, int]]:
-    async with async_session() as session:
-        result = await session.execute(
-            select(WorkbenchTabModel).where(WorkbenchTabModel.workbench_id == workbench_id)
-        )
-        return {(row.browser_id, row.tab_id) for row in result.scalars().all()}
+            _workbench_client_ids.pop(websocket, None)
+            if _workbench_controllers.get(workbench_id) is websocket:
+                _workbench_controllers.pop(workbench_id, None)
+                controller_changed = True
+                remaining = list(_workbench_clients.get(workbench_id, set()))
+                if remaining:
+                    _workbench_controllers[workbench_id] = remaining[0]
+            if not _workbench_clients.get(workbench_id):
+                _workbench_controllers.pop(workbench_id, None)
+        if controller_changed:
+            await _send_workbench_control_state(workbench_id)
 
 
 async def _input_loop(
@@ -121,11 +212,24 @@ async def _input_loop(
             t = msg.get("type")
             page = tab.page
 
-            # Track which viewer sent input (for popup routing)
-            tab.last_input_ws = websocket
+            # Track the controller that sent input (for popup routing).
+            if t != "request_control" and await _is_workbench_controller(workbench_id, websocket):
+                tab.last_input_ws = websocket
 
             try:
-                if t == "switch_tab":
+                if t == "request_control":
+                    if workbench_id is None:
+                        continue
+                    await _take_workbench_control(workbench_id, websocket)
+                    await websocket.send_text(json.dumps({
+                        "type": "control_granted",
+                        "workbench_id": workbench_id,
+                        "message": "已接管工作台控制权",
+                    }))
+
+                elif t == "switch_tab":
+                    if await _reject_non_controller(websocket, workbench_id):
+                        continue
                     if allow_switch is None:
                         await websocket.send_text(json.dumps({
                             "type": "switch_tab_error",
@@ -133,7 +237,7 @@ async def _input_loop(
                         }))
                         continue
                     if workbench_id is not None:
-                        allow_switch = await _workbench_allowed_tabs(workbench_id)
+                        allow_switch = await workbench_allowed_tabs(workbench_id)
                         if not allow_switch:
                             await websocket.send_text(json.dumps({
                                 "type": "workbench_deleted",
@@ -166,6 +270,22 @@ async def _input_loop(
                     )
                     tab = new_tab
                     tab.last_input_ws = websocket
+                    if workbench_id is not None:
+                        try:
+                            await set_active_tab(workbench_id, new_browser_id, new_tab_id)
+                        except WorkbenchRuntimeError as exc:
+                            await websocket.send_text(json.dumps({
+                                "type": "switch_tab_error",
+                                "message": exc.detail,
+                            }))
+                            continue
+                        await notify_workbench_clients(workbench_id, {
+                            "type": "active_tab_changed",
+                            "workbench_id": workbench_id,
+                            "browser_id": new_browser_id,
+                            "tab_id": new_tab_id,
+                            "room": f"{new_browser_id}_{new_tab_id}",
+                        })
                     await websocket.send_text(json.dumps({
                         "type": "switch_tab_done",
                         "browser_id": new_browser_id,
@@ -173,6 +293,8 @@ async def _input_loop(
                     }))
 
                 elif t == "mouse":
+                    if await _reject_non_controller(websocket, workbench_id):
+                        continue
                     btn = msg.get("button", "none")
                     pw_btn = "left" if btn == "left" else "middle" if btn == "middle" else "right"
                     x, y = msg.get("x", 0), msg.get("y", 0)
@@ -187,10 +309,14 @@ async def _input_loop(
                         await page.mouse.up(button=pw_btn if btn != "none" else "left")
                     
                 elif t == "scroll":
+                    if await _reject_non_controller(websocket, workbench_id):
+                        continue
                     # Fire-and-forget: 不等 CDP 往返，立即处理下一条消息
                     asyncio.create_task(_scroll_fire(page, msg.get("deltaX", 0), msg.get("deltaY", 0)))
                 
                 elif t == "keyboard":
+                    if await _reject_non_controller(websocket, workbench_id):
+                        continue
                     key = msg.get("key", "")
                     if key:
                         if msg.get("eventType") == "keyDown":
@@ -199,11 +325,15 @@ async def _input_loop(
                             await page.keyboard.up(key)
                         
                 elif t == "insertText":
+                    if await _reject_non_controller(websocket, workbench_id):
+                        continue
                     text = msg.get("text", "")
                     if text:
                         await page.keyboard.insert_text(text)
 
                 elif t == "paste-file":
+                    if await _reject_non_controller(websocket, workbench_id):
+                        continue
                     import base64
                     file_data = msg.get("data", "")
                     file_name = msg.get("name", "clipboard.png")
@@ -226,6 +356,8 @@ async def _input_loop(
                         print(f"[ws:{tab.browser_id}/{tab.tab_id}] paste-file: {file_name} ({file_mime})")
 
                 elif t == "translate":
+                    if await _reject_non_controller(websocket, workbench_id):
+                        continue
                     restore = msg.get("restore", False)
                     target_lang = msg.get("lang", "zh-CN")
                     try:
@@ -285,6 +417,8 @@ async def _input_loop(
                         print(f"[ws:{tab.browser_id}/{tab.tab_id}] translate error: {e}")
 
                 elif t == "viewport":
+                    if await _reject_non_controller(websocket, workbench_id):
+                        continue
                     w = msg.get("width", 1280)
                     h = msg.get("height", 720)
                     w = max(320, min(3840, int(w)))
@@ -293,6 +427,37 @@ async def _input_loop(
                     await browser_manager.update_persistent_tab_viewport(tab.browser_id, tab.tab_id, w, h)
                     if tab.publisher:
                         await tab.publisher.refresh_stream()
+
+                elif t == "navigate":
+                    if await _reject_non_controller(websocket, workbench_id):
+                        continue
+                    url = msg.get("url", "")
+                    browser = browser_manager.get_browser(tab.browser_id)
+                    if not browser:
+                        raise KeyError(f"Browser {tab.browser_id} not found")
+                    result = await browser.navigate_tab(tab.tab_id, url)
+                    await browser_manager.update_persistent_tab_url(tab.browser_id, tab.tab_id, result["url"])
+                    await websocket.send_text(json.dumps({"type": "nav_done", **result}))
+
+                elif t == "back":
+                    if await _reject_non_controller(websocket, workbench_id):
+                        continue
+                    browser = browser_manager.get_browser(tab.browser_id)
+                    if not browser:
+                        raise KeyError(f"Browser {tab.browser_id} not found")
+                    result = await browser.go_back(tab.tab_id)
+                    await browser_manager.update_persistent_tab_url(tab.browser_id, tab.tab_id, result["url"])
+                    await websocket.send_text(json.dumps({"type": "nav_done", **result}))
+
+                elif t == "forward":
+                    if await _reject_non_controller(websocket, workbench_id):
+                        continue
+                    browser = browser_manager.get_browser(tab.browser_id)
+                    if not browser:
+                        raise KeyError(f"Browser {tab.browser_id} not found")
+                    result = await browser.go_forward(tab.tab_id)
+                    await browser_manager.update_persistent_tab_url(tab.browser_id, tab.tab_id, result["url"])
+                    await websocket.send_text(json.dumps({"type": "nav_done", **result}))
             except Exception as e:
                 print(f"[ws:{tab.browser_id}/{tab.tab_id}] input error ({t}): {e}")
                     

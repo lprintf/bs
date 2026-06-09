@@ -158,6 +158,14 @@
             display: inline-flex;
         }
 
+        .control-btn {
+            display: none;
+        }
+
+        body.workbench .control-btn {
+            display: inline-flex;
+        }
+
         /* WebRTC Stats */
         .stats-bar {
             display: flex;
@@ -469,6 +477,8 @@
         <div class="tb-sep"></div>
         <span class="tb-label" id="tabLabel"></span>
         <span class="mode-badge" id="modeBadge">Workbench</span>
+        <button class="tb-btn sm control-btn" id="controlBtn" onclick="takeWorkbenchControl()"
+            title="Take Workbench control">Take control</button>
         <div class="tb-sep"></div>
         <button class="tb-btn sm" id="translateBtn" onclick="translatePage()"
             title="Translate current page">🌐 Translate</button>
@@ -535,7 +545,7 @@
     <script>
         window.TABSHARE_VIEWER_MODE = 'viewer';
     </script>
-    <script src="/static/js/viewer.js?v=20260527-workbench-add-tabs1"></script>
+    <script src="/static/js/viewer.js?v=20260605-workbench-lock-recording"></script>
 </body>
 
 </html>
