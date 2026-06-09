@@ -35,9 +35,16 @@ type Recorder struct {
 	vp8Builder     *samplebuilder.SampleBuilder
 	videoTimestamp time.Duration
 
-	started  bool
-	closed   bool
-	pktCount uint64
+	started   bool
+	closed    bool
+	closing   bool
+	pktCount  uint64
+	dropCount uint64
+
+	pktCh      chan *rtp.Packet
+	done       chan struct{}
+	workerDone chan struct{}
+	closeOnce  sync.Once
 }
 
 // NewRecorder creates a recorder for a room.
@@ -51,29 +58,69 @@ func NewRecorder(room string) *Recorder {
 	filename := fmt.Sprintf("%s_%s.webm", room, ts)
 	fp := filepath.Join(dir, filename)
 
-	return &Recorder{
+	r := &Recorder{
 		room:       room,
 		filePath:   fp,
 		vp8Builder: samplebuilder.New(64, &codecs.VP8Packet{}, 90000),
+		pktCh:      make(chan *rtp.Packet, 2048),
+		done:       make(chan struct{}),
+		workerDone: make(chan struct{}),
 	}
+	go r.run()
+	return r
 }
 
 // PushRTP feeds an RTP packet into the recorder.
-// Thread-safe; called from the publisher's read loop.
+// Non-blocking; called from the publisher's read loop.
 func (r *Recorder) PushRTP(pkt *rtp.Packet) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.closed {
+	if r.closing || r.closed {
 		return
 	}
+	select {
+	case r.pktCh <- pkt:
+		return
+	default:
+		r.dropCount++
+		if r.dropCount == 1 || r.dropCount%300 == 0 {
+			log.Printf("[recorder:%s] queue full, dropped %d RTP packets", r.room, r.dropCount)
+		}
+	}
+}
 
+func (r *Recorder) run() {
+	defer close(r.workerDone)
+	for {
+		select {
+		case pkt := <-r.pktCh:
+			r.writeRTP(pkt)
+		case <-r.done:
+			for {
+				select {
+				case pkt := <-r.pktCh:
+					r.writeRTP(pkt)
+				default:
+					r.finalize()
+					return
+				}
+			}
+		}
+	}
+}
+
+func (r *Recorder) writeRTP(pkt *rtp.Packet) {
 	r.vp8Builder.Push(pkt)
 
 	for {
 		sample := r.vp8Builder.Pop()
 		if sample == nil {
 			return
+		}
+
+		if len(sample.Data) == 0 {
+			continue
 		}
 
 		// VP8 keyframe detection: bit 0 of first byte == 0
@@ -99,7 +146,6 @@ func (r *Recorder) PushRTP(pkt *rtp.Packet) {
 }
 
 // initWriter opens the WebM file and creates the writer.
-// Must be called with lock held.
 func (r *Recorder) initWriter(firstFrame []byte) error {
 	// Parse VP8 keyframe header for width/height
 	if len(firstFrame) < 10 {
@@ -143,6 +189,17 @@ func (r *Recorder) initWriter(firstFrame []byte) error {
 
 // Close finalizes the WebM file.
 func (r *Recorder) Close() {
+	r.closeOnce.Do(func() {
+		r.mu.Lock()
+		r.closing = true
+		r.mu.Unlock()
+		close(r.done)
+		<-r.workerDone
+		log.Printf("[recorder:%s] closed: %s (%d frames, %d dropped RTP)", r.room, r.filePath, r.pktCount, r.dropCount)
+	})
+}
+
+func (r *Recorder) finalize() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -157,7 +214,6 @@ func (r *Recorder) Close() {
 	if r.file != nil {
 		r.file.Close()
 	}
-	log.Printf("[recorder:%s] closed: %s (%d frames)", r.room, r.filePath, r.pktCount)
 }
 
 // FilePath returns the recording file path.
